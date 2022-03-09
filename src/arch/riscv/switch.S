@@ -1,6 +1,6 @@
 # Context switch
 #
-#   void swtch(struct GeneralRegs *old, struct GeneralRegs *new);
+#   void swtch(struct ContextData *old, struct ContextData *new);
 # 
 # Save current registers in old. Load from new.	
 

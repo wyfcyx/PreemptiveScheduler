@@ -1,21 +1,46 @@
-/// Executor context
-#[derive(Debug, Default, Clone, Copy)]
-#[repr(C)]
-pub struct Context {
-    pub ra: usize,
-    pub sp: usize,
+pub use crate::arch::ContextData;
 
-    // callee-saved
-    pub s0: usize,
-    pub s1: usize,
-    pub s2: usize,
-    pub s3: usize,
-    pub s4: usize,
-    pub s5: usize,
-    pub s6: usize,
-    pub s7: usize,
-    pub s8: usize,
-    pub s9: usize,
-    pub s10: usize,
-    pub s11: usize,
+#[derive(Debug, Default)]
+pub struct Context {
+    context: usize,
+}
+
+impl Context {
+    pub fn set_context(&mut self, addr: usize) {
+        self.context = addr;
+    }
+
+    pub fn get_context(&self) -> usize {
+        self.context
+    }
+
+    pub fn get_context_data(&self) -> &ContextData {
+        unsafe {
+            let context = self.context as *const ContextData；
+            &*context
+        }   
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    pub fn get_sp(&self) -> usize {
+        self.context
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    pub fn get_pc(&self) -> usize {
+        let context_data = self.get_context_data();
+        context_data.rip
+    }
+
+    #[cfg(target_arch = "riscv64")]
+    pub fn get_sp(&self) -> usize {
+        let context_data = self.get_context_data();
+        context_data.sp
+    }
+
+    #[cfg(target_arch = "riscv64")]
+    pub fn get_pc(&self) -> usize {
+        let context_data = self.get_context_data();
+        context_data.ra
+    }
 }

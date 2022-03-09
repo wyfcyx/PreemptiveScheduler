@@ -4,20 +4,19 @@
 #![feature(global_asm)]
 #![feature(asm)]
 #![feature(generators, generator_trait)]
+#![feature(stmt_expr_attributes)]
 
-
-global_asm!(include_str!("switch.S"));
-global_asm!(include_str!("executor_entry.S"));
-
-/// return id of current cpu, it requires kernel maintaining cpuid in tp
-/// register.
-pub(crate) fn cpu_id() -> u8 {
-  let mut cpu_id;
-  unsafe {
-      asm!("mv {0}, tp", out(reg) cpu_id);
+cfg_if::cfg_if! {
+  if #[cfg(target_arch = "x86_64")] {
+      #[path = "arch/x86_64/mod.rs"]
+      mod arch;
+  } else if #[cfg(target_arch = "riscv64")] {
+      #[path = "arch/riscv64/mod.rs"]
+      mod arch;
   }
-  cpu_id
 }
+
+use arch::*;
 
 extern "C" {
   pub(crate) fn wait_for_interrupt();
@@ -26,10 +25,15 @@ extern "C" {
   pub(crate) fn trap_return();
 }
 
-mod waker_page;
-mod runtime;
-mod executor;
-mod context;
-mod task_collection;
+extern crate alloc;
+#[macro_use]
+extern crate log;
 
-pub use runtime::{spawn, run, handle_timeout};
+mod context;
+mod executor;
+mod runtime;
+mod task_collection;
+mod waker_page;
+
+pub use context::{Context, ContextData};
+pub use runtime::{handle_timeout, run, spawn};

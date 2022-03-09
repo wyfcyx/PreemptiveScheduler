@@ -145,8 +145,8 @@ impl<F: Future<Output = ()> + Unpin + 'static> TaskCollection<F> {
         let subpage_ix = key % WAKER_PAGE_SIZE;
         let page_ix = (key << 5) >> 11;
         let priority = key >> 58;
-        log::trace!("key= 0x{:x}", key);
-        log::trace!("priority={}", priority);
+        trace!("key= 0x{:x}", key);
+        trace!("priority={}", priority);
         let ptr = self.inners[priority as usize].as_ptr();
         unsafe { (priority, &((*ptr).pages[page_ix]), subpage_ix) }
     }
@@ -158,7 +158,7 @@ impl<F: Future<Output = ()> + Unpin + 'static> TaskCollection<F> {
 
     /// remove the task correponding to the key.
     pub fn remove_task(&self, key: u64) {
-        log::trace!("remove task key = 0x{:x}", key);
+        trace!("remove task key = 0x{:x}", key);
         let (priority, page, offset) = self.parse_key(key as u64);
         let mut inner = self.get_mut_inner(priority);
         page.mark_dropped(offset);
@@ -199,16 +199,16 @@ impl<F: Future<Output = ()> + Unpin + 'static> TaskCollection<F> {
             loop {
                 let mut found = false;
                 for priority in 0..16 {
-                    // log::warn!("get mut inner: generator1 start");
+                    // warn!("get mut inner: generator1 start");
                     let mut inner = self.get_mut_inner(priority);
-                    // log::warn!("get mut inner: generator1 end");
+                    // warn!("get mut inner: generator1 end");
                     let pages_len = inner.pages.len();
                     for page_idx in 0..pages_len {
                         let (notified, dropped) = {
                             let page = &mut inner.pages[page_idx];
                             (page.take_notified(), page.take_dropped())
                         };
-                        log::trace!("notified={}", notified);
+                        trace!("notified={}", notified);
                         if notified != 0 {
                             found = true;
                             for subpage_idx in BitIter::from(notified) {
@@ -228,11 +228,11 @@ impl<F: Future<Output = ()> + Unpin + 'static> TaskCollection<F> {
                                 let pinned_ref = unsafe { Pin::new_unchecked(&mut *pinned_ptr) };
                                 let page_ref = inner.pages[page_idx].clone();
                                 drop(inner);
-                                log::trace!("yield coroutine");
+                                trace!("yield coroutine");
                                 yield Some((key as u64, page_ref, pinned_ref, waker));
-                                log::warn!("get mut inner: generator2 start");
+                                warn!("get mut inner: generator2 start");
                                 inner = self.get_mut_inner(priority);
-                                log::warn!("get mut inner: generator2 end");
+                                warn!("get mut inner: generator2 end");
                             }
                         }
                         if dropped != 0 {

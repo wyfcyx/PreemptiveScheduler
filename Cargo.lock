@@ -46,6 +46,7 @@ name = "executor"
 version = "0.1.0"
 dependencies = [
  "bit-iter",
+ "cfg-if",
  "lazy_static",
  "log",
  "riscv",
