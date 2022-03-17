@@ -69,6 +69,19 @@ impl Executor {
         let mut stack_top = self.stack_base + STACK_SIZE;
         let self_addr = self as *const Self as usize;
         stack_top = push_stack(stack_top, self_addr);
+        #[cfg(target_arch = "riscv64")]
+        {
+            const SUM: usize = 1 << 18;
+            const SIE: usize = 1 << 1;
+            let sstatus = SUM | SIE;
+            stack_top = push_stack(stack_top, sstatus);
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            const IF: usize = 1 << 9;
+            let rflags = IF;
+            stack_top = push_stack(stack_top, rflags);
+        }
         let context_data = ContextData::new(executor_entry as *const () as usize, stack_top);
         stack_top = push_stack(stack_top, context_data);
         stack_top

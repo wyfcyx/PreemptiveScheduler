@@ -1,18 +1,11 @@
-extern crate alloc;
-use crate::context::Context as ThreadContext;
-use crate::executor::Executor;
-use crate::switch;
-use crate::task_collection::{Task, TaskCollection, TaskState, DEFAULT_PRIORITY, MAX_PRIORITY};
-use crate::waker_page::WakerPageRef;
-use alloc::sync::Arc;
-use alloc::vec;
-use alloc::vec::Vec;
-use core::task::Waker;
+use crate::{
+    arch::switch, context::Context as ThreadContext, executor::Executor, task_collection::*,
+    waker_page::WakerPageRef,
+};
+use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
+use core::{future::Future, pin::Pin, task::Waker};
 use lazy_static::*;
-use riscv::asm;
-use riscv::register::sstatus;
 use spin::{Mutex, MutexGuard};
-use {alloc::boxed::Box, core::future::Future, core::pin::Pin};
 
 pub struct ExecutorRuntime {
     // runtime only run on this cpu
@@ -126,7 +119,7 @@ pub fn run() {
         drop(runtime);
         trace!("run strong executor");
         unsafe {
-            switch(runtime_cx, executor_cx);
+            switch(runtime_cx as _, executor_cx as _);
             // 该函数返回说明当前 strong_executor 执行的 future 超时或者主动 yield 了,
             // 需要重新创建一个 executor 执行后续的 future, 并且将
             // 新的 executor 作为 strong_executor，旧的 executor 添
@@ -162,7 +155,7 @@ pub fn run() {
                 unsafe {
                     // sstatus::set_sie();
                     trace!("switch weak executor");
-                    switch(runtime_cx, executor.context.get_context());
+                    switch(runtime_cx as _, executor.context.get_context() as _);
                     trace!("switch weak executor return");
                     // sstatus::clear_sie();
                 }
@@ -177,38 +170,29 @@ pub fn run() {
 
 pub fn spawn(future: impl Future<Output = ()> + Send + 'static) {
     trace!("spawn coroutine");
-    priority_spawn(future, DEFAULT_PRIORITY);
+    spawn_task(future, None, None);
     trace!("spawn coroutine over");
 }
 
-/// spawn a coroutine with `priority`.
-/// insert new coroutine to the cpu with fewest number of tasks.
-pub fn priority_spawn(future: impl Future<Output = ()> + Send + 'static, priority: usize) {
-    trace!("in priority_spawn");
-    let bf: Pin<alloc::boxed::Box<dyn Future<Output = ()> + Send + 'static>> = Box::pin(future);
-    let future = Mutex::from(bf);
-    let state = Mutex::from(TaskState::RUNNABLE);
-    let task = Task {
-        future,
-        state,
-        _priority: priority as u8,
+/// Spawn a coroutine with `priority` and `cpu_id`
+/// Default priority: DEFAULT_PRIORITY
+/// Default cpu_id: the cpu with fewest number of tasks
+pub fn spawn_task(
+    future: impl Future<Output = ()> + Send + 'static,
+    priority: Option<usize>,
+    cpu_id: Option<usize>,
+) {
+    let priority = priority.unwrap_or(DEFAULT_PRIORITY);
+    let task = Task::new(future, priority);
+    let runtime = if let Some(cpu_id) = cpu_id {
+        &GLOBAL_RUNTIME[cpu_id]
+    } else {
+        GLOBAL_RUNTIME
+            .iter()
+            .min_by_key(|runtime| runtime.lock().task_num())
+            .unwrap()
     };
-
-    let mut fewest_task_cpu_id = 0;
-    let mut fewest_task_num = GLOBAL_RUNTIME[0].lock().task_num();
-    for runtime_idx in 1..GLOBAL_RUNTIME.len() {
-        let runtime = GLOBAL_RUNTIME[runtime_idx].lock();
-        let task_num = runtime.task_num();
-        if task_num < fewest_task_num {
-            fewest_task_cpu_id = runtime_idx;
-            fewest_task_num = task_num;
-        }
-    }
-    fewest_task_cpu_id = 0;
-    trace!("fewest_task_cpu_id:{}", fewest_task_cpu_id);
-    GLOBAL_RUNTIME[fewest_task_cpu_id]
-        .lock()
-        .add_task(priority, task);
+    runtime.lock().add_task(priority, task);
 }
 
 /// check whether the running coroutine of current cpu time out, if yes, we will
@@ -217,20 +201,19 @@ pub fn priority_spawn(future: impl Future<Output = ()> + Send + 'static, priorit
 pub fn handle_timeout() {
     trace!("handle timeout");
     let runtime = get_current_runtime();
-    if !runtime
+    if runtime
         .current_executor
         .as_ref()
         .unwrap()
         .is_running_future()
     {
-        return;
+        drop(runtime);
+        yeild();
+        trace!("handle timeout return");
     }
-    drop(runtime);
-    yeild();
-    trace!("handle timeout return");
 }
 
-// 运行executor.run()
+/// 运行executor.run()
 #[no_mangle]
 pub(crate) fn run_executor(executor_addr: usize) {
     trace!("run new executor: executor addr 0x{:x}", executor_addr);
@@ -243,7 +226,7 @@ pub(crate) fn run_executor(executor_addr: usize) {
         let executor_cx = &(p.context) as *const ThreadContext as usize;
         let runtime_cx = cx_ref as *const ThreadContext as usize;
         drop(runtime);
-        unsafe { crate::switch(executor_cx, runtime_cx) }
+        unsafe { crate::switch(executor_cx as _, runtime_cx as _) }
         unreachable!();
     }
 }
@@ -256,7 +239,7 @@ pub(crate) fn yeild() {
         &(runtime.current_executor.as_ref().unwrap().context) as *const ThreadContext as usize;
     let runtime_cx = cx_ref as *const ThreadContext as usize;
     drop(runtime);
-    unsafe { crate::switch(executor_cx, runtime_cx) }
+    unsafe { crate::switch(executor_cx as _, runtime_cx as _) }
 }
 
 /// return runtime `MutexGuard` of current cpu.

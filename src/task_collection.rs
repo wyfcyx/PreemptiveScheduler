@@ -21,16 +21,17 @@ use {
     core::task::{Context, Poll},
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskState {
-    _BLOCKED,
+    BLOCKED,
     RUNNABLE,
-    _RUNNING,
+    RUNNING,
 }
 
 pub struct Task {
     pub future: Mutex<Pin<Box<dyn Future<Output = ()> + Send>>>,
     pub state: Mutex<TaskState>,
-    pub _priority: u8,
+    pub priority: usize,
 }
 
 impl Future for Task {
@@ -42,20 +43,24 @@ impl Future for Task {
 }
 
 impl Task {
-    pub fn _is_runnable(&self) -> bool {
-        let task_state = self.state.lock();
-        if let TaskState::RUNNABLE = *task_state {
-            true
-        } else {
-            false
+    pub fn new(future: impl Future<Output = ()> + Send + 'static, priority: usize) -> Self {
+        Self {
+            future: Mutex::new(Box::pin(future)),
+            state: Mutex::new(TaskState::RUNNABLE),
+            priority,
         }
     }
+    pub fn is_runnable(&self) -> bool {
+        let task_state = self.state.lock();
+        TaskState::RUNNABLE == *task_state
+    }
 
-    pub fn _block(&self) {
+    pub fn block(&self) {
         let mut task_state = self.state.lock();
-        *task_state = TaskState::_BLOCKED;
+        *task_state = TaskState::BLOCKED;
     }
 }
+
 pub struct Inner<F: Future<Output = ()> + Unpin> {
     pub slab: PinSlab<F>,
     // root_waker: SharedWaker,
@@ -142,12 +147,12 @@ impl<F: Future<Output = ()> + Unpin + 'static> TaskCollection<F> {
     /// 59-64: priority.
     fn parse_key(&self, key: u64) -> (usize, &WakerPageRef, usize) {
         let key = key as usize;
-        let subpage_ix = key % WAKER_PAGE_SIZE;
+        let subpage_ix = key & 0x3F;
         let page_ix = (key << 5) >> 11;
         let priority = key >> 58;
         trace!("key= 0x{:x}", key);
         trace!("priority={}", priority);
-        let ptr = self.inners[priority as usize].as_ptr();
+        let ptr = self.inners[priority].as_ptr();
         unsafe { (priority, &((*ptr).pages[page_ix]), subpage_ix) }
     }
 
@@ -159,7 +164,7 @@ impl<F: Future<Output = ()> + Unpin + 'static> TaskCollection<F> {
     /// remove the task correponding to the key.
     pub fn remove_task(&self, key: u64) {
         trace!("remove task key = 0x{:x}", key);
-        let (priority, page, offset) = self.parse_key(key as u64);
+        let (priority, page, offset) = self.parse_key(key);
         let mut inner = self.get_mut_inner(priority);
         page.mark_dropped(offset);
         inner.slab.remove((key % TASK_NUM_PER_PRIORITY) as usize);

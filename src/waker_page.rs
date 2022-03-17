@@ -1,51 +1,58 @@
-extern crate alloc;
-use alloc::alloc::{Allocator, Global, Layout};
-use core::mem;
-use core::ptr;
+use alloc::boxed::Box;
+use alloc::sync::Arc;
+use core::sync::atomic::{AtomicU64, Ordering};
 use core::task::{RawWaker, RawWakerVTable};
-use {
-    core::ops::Deref,
-    core::ptr::NonNull,
-    core::sync::atomic::{AtomicU64, Ordering},
-};
 
-pub struct WakerU64(AtomicU64);
+pub struct AtomicU64SC(AtomicU64);
 pub const WAKER_PAGE_SIZE: usize = 64;
 
-impl WakerU64 {
+impl AtomicU64SC {
+    #[inline(always)]
     #[allow(unused)]
     pub fn new(val: u64) -> Self {
-        WakerU64(AtomicU64::new(val))
+        AtomicU64SC(AtomicU64::new(val))
     }
 
+    #[inline(always)]
     #[allow(unused)]
     pub fn fetch_or(&self, val: u64) {
         self.0.fetch_or(val, Ordering::SeqCst);
     }
 
+    #[inline(always)]
     #[allow(unused)]
     pub fn fetch_and(&self, val: u64) {
         self.0.fetch_and(val, Ordering::SeqCst);
     }
 
+    #[inline(always)]
     #[allow(unused)]
     pub fn fetch_add(&self, val: u64) -> u64 {
         self.0.fetch_add(val, Ordering::SeqCst)
     }
 
+    #[inline(always)]
     #[allow(unused)]
     pub fn fetch_sub(&self, val: u64) -> u64 {
         self.0.fetch_sub(val, Ordering::SeqCst)
     }
 
+    #[inline(always)]
     #[allow(unused)]
     pub fn load(&self) -> u64 {
         self.0.load(Ordering::SeqCst)
     }
 
+    #[inline(always)]
     #[allow(unused)]
     pub fn swap(&self, val: u64) -> u64 {
         self.0.swap(val, Ordering::SeqCst)
+    }
+
+    #[inline(always)]
+    #[allow(unused)]
+    pub fn as_mut_ptr(&mut self) -> *mut u64 {
+        self.0.as_mut_ptr()
     }
 }
 
@@ -81,34 +88,27 @@ impl WakerU64 {
 /// for 64 more futures at a time.
 #[repr(align(64))]
 pub struct WakerPage {
-    /// We use a single bit for our reference count implying only reference exists per future
-    /// at a time.
-    refcount: WakerU64,
     /// A 64 element bit vector representing the futures for this page which have been notified
     /// by a wake and are ready to be polled again. The ith bit represents the ith future in the
     /// corresponding memory slab.
-    notified: WakerU64,
-    completed: WakerU64,
-    dropped: WakerU64,
-    borrowed: WakerU64,
-    _unused: [u8; 16],
+    notified: AtomicU64SC,
+    completed: AtomicU64SC,
+    dropped: AtomicU64SC,
+    borrowed: AtomicU64SC,
 }
 
 impl WakerPage {
-    pub fn new() -> WakerPageRef {
-        let layout = Layout::new::<WakerPage>();
-        assert_eq!(layout.align(), 64);
-        let mut ptr: NonNull<WakerPage> =
-            Global.allocate(layout).expect("Alloction Failed.").cast();
-        unsafe {
-            let page = ptr.as_mut();
-            ptr::write(&mut page.refcount as *mut _, WakerU64::new(1));
-            ptr::write(&mut page.notified as *mut _, WakerU64::new(0));
-            ptr::write(&mut page.completed as *mut _, WakerU64::new(0));
-            ptr::write(&mut page.dropped as *mut _, WakerU64::new(0));
-            ptr::write(&mut page.borrowed as *mut _, WakerU64::new(0));
+    pub fn new_inner() -> Self {
+        WakerPage {
+            notified: AtomicU64SC::new(0),
+            completed: AtomicU64SC::new(0),
+            dropped: AtomicU64SC::new(0),
+            borrowed: AtomicU64SC::new(0),
         }
-        WakerPageRef(ptr)
+    }
+
+    pub fn new() -> Arc<Self> {
+        Arc::new(WakerPage::new_inner())
     }
 
     pub fn initialize(&self, ix: usize) {
@@ -158,141 +158,58 @@ impl WakerPage {
     }
 }
 
-pub struct WakerPageRef(NonNull<WakerPage>);
-
-impl WakerPageRef {
-    /// Get the waker for the future at the `local_index` location on this page.
-    /// 0 <= `local_index` <= 64
-    pub fn raw_waker(&self, local_index: usize) -> RawWaker {
-        self.waker(local_index).into_raw_waker()
-    }
-
-    /// Create a new waker using the local index and our WakerPage reference.
-    fn waker(&self, ix: usize) -> WakerRef {
-        debug_assert!(ix < 64);
-
-        // Bump the refcount for our new reference.
-        let self_ = self.clone();
-        mem::forget(self_);
-        unsafe {
-            let base_ptr: *mut u8 = self.0.as_ptr().cast();
-            let ptr = NonNull::new_unchecked(base_ptr.add(ix));
-            WakerRef(ptr)
-        }
-    }
+pub struct WakerRef {
+    page: Arc<WakerPage>,
+    idx: usize,
 }
-
-impl Clone for WakerPageRef {
-    fn clone(&self) -> Self {
-        let new_refcount = unsafe {
-            // TODO: We could use `Relaxed` here, see `std::sync::Arc` for documentation.
-            self.0.as_ref().refcount.fetch_add(1)
-        };
-        debug_assert!(new_refcount < core::usize::MAX as u64);
-        Self(self.0)
-    }
-}
-
-impl Drop for WakerPageRef {
-    fn drop(&mut self) {
-        unsafe {
-            if self.0.as_ref().refcount.fetch_sub(1) != 1 {
-                return;
-            }
-            ptr::drop_in_place(self.0.as_mut());
-            Global.deallocate(self.0.cast(), Layout::for_value(self.0.as_ref()));
-        }
-    }
-}
-
-impl Deref for WakerPageRef {
-    type Target = WakerPage;
-
-    fn deref(&self) -> &WakerPage {
-        unsafe { self.0.as_ref() }
-    }
-}
-
-pub struct WakerRef(NonNull<u8>);
 
 impl WakerRef {
-    // 返回WakerRef所属WakePage以及WakePage内偏移量
-    fn base_ptr(&self) -> (NonNull<WakerPage>, usize) {
-        let ptr = self.0.as_ptr();
-
-        let forward_offset = ptr.align_offset(64);
-        let mut waker_page_ptr = ptr;
-        let mut offset = 0;
-        if forward_offset != 0 {
-            offset = 64 - forward_offset;
-            waker_page_ptr = ptr.wrapping_sub(offset);
-        }
-
-        unsafe {
-            (
-                NonNull::new_unchecked(waker_page_ptr).cast(),
-                offset as usize,
-            )
-        }
-    }
-
     fn wake_by_ref(&self) {
-        let (waker_page_ptr, offset) = self.base_ptr();
-        let waker_page = unsafe { &*waker_page_ptr.as_ptr() };
-        waker_page.notify(offset);
+        self.page.notify(self.idx);
     }
 
     fn wake(self) {
         self.wake_by_ref();
     }
 
-    fn into_raw_waker(self) -> RawWaker {
-        let ptr = self.0.cast().as_ptr() as *const ();
-        let waker = RawWaker::new(ptr, &VTABLE);
-        mem::forget(self);
-        waker
+    fn into_raw(self) -> RawWaker {
+        let ptr = &self as *const WakerRef as *const ();
+        core::mem::forget(self);
+        RawWaker::new(ptr, &VTABLE)
     }
 }
 
 impl Clone for WakerRef {
     fn clone(&self) -> Self {
-        let (base_ptr, _) = self.base_ptr();
-        let p = WakerPageRef(base_ptr);
-        mem::forget(p.clone());
-        mem::forget(p);
-        WakerRef(self.0)
+        WakerRef {
+            page: self.page.clone(),
+            idx: self.idx,
+        }
     }
 }
 
-impl Drop for WakerRef {
-    fn drop(&mut self) {
-        let (base_ptr, _) = self.base_ptr();
-        // Decrement the refcount.
-        drop(WakerPageRef(base_ptr));
-    }
+fn waker_ref_clone(ptr: *const ()) -> RawWaker {
+    let waker = unsafe { &*(ptr as *const WakerRef) };
+    let clone_waker = Box::new(WakerRef {
+        page: waker.page.clone(),
+        idx: waker.idx,
+    });
+    Box::into_inner(clone_waker).into_raw()
 }
 
-unsafe fn waker_ref_clone(ptr: *const ()) -> RawWaker {
-    let p = WakerRef(NonNull::new_unchecked(ptr as *const u8 as *mut u8));
-    let q = p.clone();
-    mem::forget(p);
-    q.into_raw_waker()
+fn waker_ref_wake(ptr: *const ()) {
+    let waker = unsafe { &*(ptr as *const WakerRef) };
+    waker.wake()
 }
 
-unsafe fn waker_ref_wake(ptr: *const ()) {
-    let p = WakerRef(NonNull::new_unchecked(ptr as *const u8 as *mut u8));
-    p.wake();
+fn waker_ref_wake_by_ref(ptr: *const ()) {
+    let waker = unsafe { &*(ptr as *const WakerRef) };
+    waker.wake()
 }
 
-unsafe fn waker_ref_wake_by_ref(ptr: *const ()) {
-    let p = WakerRef(NonNull::new_unchecked(ptr as *const u8 as *mut u8));
-    p.wake_by_ref();
-    mem::forget(p);
-}
-
-unsafe fn waker_ref_drop(ptr: *const ()) {
-    let p = WakerRef(NonNull::new_unchecked(ptr as *const u8 as *mut u8));
-    drop(p);
+fn waker_ref_drop(ptr: *const ()) {
+    let waker = unsafe { &*(ptr as *const WakerRef) };
+    drop(waker)
 }
 
 const VTABLE: RawWakerVTable = RawWakerVTable::new(

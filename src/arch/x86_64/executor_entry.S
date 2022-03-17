@@ -9,6 +9,7 @@
   .global executor_entry
   .balign 4
 executor_entry:
+  popfq
   pop rdi
   jmp run_executor
 

@@ -9,8 +9,10 @@
   .globl executor_entry
   .balign 4
 executor_entry:
-  ld a0, 0(sp)
-  # addi sp, sp, 8
+  ld t0, 0(sp)
+  csrw sstatus, t0
+  ld a0, 8(sp)
+  addi sp, sp, 16
   j run_executor
 
 

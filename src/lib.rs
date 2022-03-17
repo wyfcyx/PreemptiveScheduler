@@ -2,9 +2,10 @@
 #![feature(allocator_api)]
 #![feature(get_mut_unchecked)]
 #![feature(global_asm)]
-#![feature(asm)]
 #![feature(generators, generator_trait)]
 #![feature(stmt_expr_attributes)]
+#![feature(atomic_mut_ptr)]
+#![feature(box_into_inner)]
 
 cfg_if::cfg_if! {
   if #[cfg(target_arch = "x86_64")] {
@@ -17,13 +18,6 @@ cfg_if::cfg_if! {
 }
 
 use arch::*;
-
-extern "C" {
-  pub(crate) fn wait_for_interrupt();
-  pub(crate) fn executor_entry();
-  pub(crate) fn switch(save_cx: usize, load_cx: usize);
-  pub(crate) fn trap_return();
-}
 
 extern crate alloc;
 #[macro_use]

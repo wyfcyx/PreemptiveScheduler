@@ -20,3 +20,7 @@ pub(crate) fn cpu_id() -> u8 {
     // }
     cpu_id
 }
+
+pub(crate) fn wait_for_interrupt() {
+    // TODO
+}
