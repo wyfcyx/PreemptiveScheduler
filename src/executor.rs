@@ -1,9 +1,6 @@
-use crate::task_collection::Task;
-use crate::waker_page::WAKER_PAGE_SIZE;
-use crate::{
-    context::{Context as ExecuterContext, ContextData},
-    waker_page::WakerPageRef,
-};
+use crate::context::{Context as ExecuterContext, ContextData};
+use crate::task_collection::{Key, Task};
+use crate::waker_page::{WakerPage, WAKER_PAGE_SIZE};
 use alloc::alloc::{Allocator, Global, Layout};
 use core::matches;
 use core::pin::Pin;
@@ -39,36 +36,35 @@ const STACK_SIZE: usize = 4096 * 32;
 
 impl Executor {
     pub fn new(task_collection: Arc<TaskCollection<Task>>) -> Pin<Box<Self>> {
-        unsafe {
-            let stack_base: NonNull<u8> = Global
-                .allocate(Layout::new::<[u8; STACK_SIZE]>())
-                .expect("Stack Alloction Failed.")
-                .cast();
-            let stack_base = stack_base.as_ptr() as usize;
-            let mut pin_executor = Pin::new(Box::new(Executor {
-                task_collection: task_collection,
-                stack_base: stack_base,
-                context: ExecuterContext::default(),
-                is_running_future: false,
-                state: ExecutorState::UNUSED,
-            }));
+        let stack_base: NonNull<u8> = Global
+            .allocate(Layout::new::<[u8; STACK_SIZE]>())
+            .expect("Stack Alloction Failed.")
+            .cast();
+        let stack_base = stack_base.as_ptr() as usize;
+        let mut pin_executor = Pin::new(Box::new(Executor {
+            task_collection: task_collection,
+            stack_base: stack_base,
+            context: ExecuterContext::default(),
+            is_running_future: false,
+            state: ExecutorState::UNUSED,
+        }));
 
-            pin_executor.context.set_context(pin_executor.init_stack());
+        let sp = pin_executor.init_stack();
+        pin_executor.context.set_context(sp);
 
-            trace!(
-                "stack top 0x{:x} executor addr 0x{:x}",
-                pin_executor.context.get_sp(),
-                pin_executor.context.get_pc(),
-            );
-            pin_executor
-        }
+        trace!(
+            "stack top 0x{:x} executor addr 0x{:x}",
+            pin_executor.context.get_sp(),
+            pin_executor.context.get_pc(),
+        );
+        pin_executor
     }
 
     // stack layout: [executor_addr | context ]
     fn init_stack(&mut self) -> usize {
         let mut stack_top = self.stack_base + STACK_SIZE;
         let self_addr = self as *const Self as usize;
-        stack_top = push_stack(stack_top, self_addr);
+        stack_top = unsafe { push_stack(stack_top, self_addr) };
         #[cfg(target_arch = "riscv64")]
         {
             const SUM: usize = 1 << 18;
@@ -80,17 +76,17 @@ impl Executor {
         {
             const IF: usize = 1 << 9;
             let rflags = IF;
-            stack_top = push_stack(stack_top, rflags);
+            stack_top = unsafe { push_stack(stack_top, rflags) };
         }
         let context_data = ContextData::new(executor_entry as *const () as usize, stack_top);
-        stack_top = push_stack(stack_top, context_data);
+        stack_top = unsafe { push_stack(stack_top, context_data) };
         stack_top
     }
 
     fn run_task(
         &mut self,
-        key: u64,
-        page_ref: WakerPageRef,
+        key: Key,
+        page_ref: Arc<WakerPage>,
         pinned_task_ref: Pin<&mut Task>,
         waker: Waker,
     ) {
@@ -119,7 +115,7 @@ impl Executor {
         match ret {
             Poll::Ready(()) => {
                 // self.task_collection.remove_task(key);
-                page_ref.mark_dropped((key % (WAKER_PAGE_SIZE as u64)) as usize);
+                page_ref.mark_dropped((key % WAKER_PAGE_SIZE) as usize);
             }
             Poll::Pending => (),
         }

@@ -111,21 +111,21 @@ impl WakerPage {
         Arc::new(WakerPage::new_inner())
     }
 
-    pub fn initialize(&self, ix: usize) {
-        debug_assert!(ix < 64);
-        self.notified.fetch_or(1 << ix);
-        self.completed.fetch_and(!(1 << ix));
-        self.dropped.fetch_and(!(1 << ix));
+    pub fn initialize(&self, idx: usize) {
+        debug_assert!(idx < 64);
+        self.notified.fetch_or(1 << idx);
+        self.completed.fetch_and(!(1 << idx));
+        self.dropped.fetch_and(!(1 << idx));
     }
 
-    pub fn mark_dropped(&self, ix: usize) {
-        debug_assert!(ix < 64);
-        self.dropped.fetch_or(1 << ix);
+    pub fn mark_dropped(&self, idx: usize) {
+        debug_assert!(idx < 64);
+        self.dropped.fetch_or(1 << idx);
     }
 
-    pub fn mark_complete(&self, ix: usize) {
-        debug_assert!(ix < 64);
-        self.completed.fetch_or(1 << ix);
+    pub fn mark_complete(&self, idx: usize) {
+        debug_assert!(idx < 64);
+        self.completed.fetch_or(1 << idx);
     }
 
     pub fn notify(&self, offset: usize) {
@@ -149,12 +149,19 @@ impl WakerPage {
         self.dropped.swap(0)
     }
 
-    pub fn clear(&self, ix: usize) {
-        debug_assert!(ix < 64);
-        let mask = !(1 << ix);
+    pub fn clear(&self, idx: usize) {
+        debug_assert!(idx < 64);
+        let mask = !(1 << idx);
         self.notified.fetch_and(mask);
         self.completed.fetch_and(mask);
         self.dropped.fetch_and(mask);
+    }
+
+    pub fn make_waker(self: &Arc<Self>, idx: usize) -> WakerRef {
+        WakerRef {
+            page: self.clone(),
+            idx,
+        }
     }
 }
 
@@ -172,10 +179,20 @@ impl WakerRef {
         self.wake_by_ref();
     }
 
-    fn into_raw(self) -> RawWaker {
-        let ptr = &self as *const WakerRef as *const ();
-        core::mem::forget(self);
-        RawWaker::new(ptr, &VTABLE)
+    pub fn into_raw(self) -> RawWaker {
+        let WakerRef { page, idx } = self;
+        let ptr = Arc::into_raw(page);
+        assert!((ptr as usize % 64) == 0 && idx < 64);
+        RawWaker::new((ptr as usize + idx) as _, &raw_waker::VTABLE)
+    }
+
+    pub fn form_raw(data: *const ()) -> Self {
+        let idx = data as usize & 0x3F;
+        let ptr = data as usize & !(0x3F);
+        WakerRef {
+            page: unsafe { Arc::from_raw(ptr as _) },
+            idx: idx,
+        }
     }
 }
 
@@ -188,33 +205,33 @@ impl Clone for WakerRef {
     }
 }
 
-fn waker_ref_clone(ptr: *const ()) -> RawWaker {
-    let waker = unsafe { &*(ptr as *const WakerRef) };
-    let clone_waker = Box::new(WakerRef {
-        page: waker.page.clone(),
-        idx: waker.idx,
-    });
-    Box::into_inner(clone_waker).into_raw()
-}
+mod raw_waker {
+    use super::*;
 
-fn waker_ref_wake(ptr: *const ()) {
-    let waker = unsafe { &*(ptr as *const WakerRef) };
-    waker.wake()
-}
+    fn waker_ref_clone(data: *const ()) -> RawWaker {
+        RawWaker::new(data, &VTABLE)
+    }
 
-fn waker_ref_wake_by_ref(ptr: *const ()) {
-    let waker = unsafe { &*(ptr as *const WakerRef) };
-    waker.wake()
-}
+    fn waker_ref_wake(data: *const ()) {
+        let waker = WakerRef::form_raw(data);
+        waker.wake();
+    }
 
-fn waker_ref_drop(ptr: *const ()) {
-    let waker = unsafe { &*(ptr as *const WakerRef) };
-    drop(waker)
-}
+    fn waker_ref_wake_by_ref(data: *const ()) {
+        let waker = WakerRef::form_raw(data);
+        waker.wake_by_ref();
+        core::mem::forget(waker);
+    }
 
-const VTABLE: RawWakerVTable = RawWakerVTable::new(
-    waker_ref_clone,
-    waker_ref_wake,
-    waker_ref_wake_by_ref,
-    waker_ref_drop,
-);
+    fn waker_ref_drop(data: *const ()) {
+        let waker = WakerRef::form_raw(data);
+        drop(waker)
+    }
+
+    pub(super) const VTABLE: RawWakerVTable = RawWakerVTable::new(
+        waker_ref_clone,
+        waker_ref_wake,
+        waker_ref_wake_by_ref,
+        waker_ref_drop,
+    );
+}

@@ -1,6 +1,6 @@
 use crate::{
     arch::switch, context::Context as ThreadContext, executor::Executor, task_collection::*,
-    waker_page::WakerPageRef,
+    waker_page::WakerPage,
 };
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 use core::{future::Future, pin::Pin, task::Waker};
@@ -30,10 +30,11 @@ pub struct ExecutorRuntime {
 impl ExecutorRuntime {
     pub fn new(cpu_id: u8) -> Self {
         let task_collection = TaskCollection::new();
+        let tc_clone = task_collection.clone();
         let e = ExecutorRuntime {
             cpu_id: cpu_id,
             task_collection: task_collection,
-            strong_executor: Arc::new(Executor::new(task_collection.clone())),
+            strong_executor: Arc::new(Executor::new(tc_clone)),
             weak_executor_vec: vec![],
             current_executor: None,
             context: ThreadContext::default(),
@@ -65,12 +66,12 @@ impl ExecutorRuntime {
     }
 
     // 添加一个task，它的初始状态是 notified，也就是说它可以被执行.
-    fn add_task(&self, priority: usize, future: Task) -> u64 {
+    fn add_task(&self, priority: usize, future: Task) -> Key {
         debug_assert!(priority < MAX_PRIORITY);
-        self.task_collection.priority_add_task(priority, future)
+        self.task_collection.add_task(future)
     }
 
-    fn remove_task(&self, key: u64) {
+    fn remove_task(&self, key: Key) {
         self.task_collection.remove_task(key)
     }
 }
@@ -96,7 +97,7 @@ lazy_static! {
 static num: usize = 0;
 // obtain a task from other cpu.
 pub(crate) fn steal_task_from_other_cpu(
-) -> Option<(u64, WakerPageRef, Pin<&'static mut Task>, Waker)> {
+) -> Option<(Key, Arc<WakerPage>, Pin<&'static mut Task>, Waker)> {
     let runtime = GLOBAL_RUNTIME
         .iter()
         .max_by_key(|runtime| runtime.lock().task_num())
@@ -138,24 +139,24 @@ pub fn run() {
         // 遍历全部的weak_executor
         if runtime.weak_executor_vec.is_empty() {
             drop(runtime);
-            unsafe {
-                crate::wait_for_interrupt();
-            }
+            crate::wait_for_interrupt();
             continue;
         }
         trace!("run weak executor size={}", runtime.weak_executor_vec.len());
-        for executor in runtime.weak_executor_vec.iter() {
-            if let Some(executor) = executor {
+        for idx in 0..runtime.weak_executor_vec.len() {
+            if let Some(executor) = &runtime.weak_executor_vec[idx] {
                 if executor.killed() {
                     // TODO: 回收资源
                     continue;
                 }
-                runtime.current_executor = Some(executor.clone());
+                let executor = executor.clone();
+                let context = executor.context.get_context();
+                runtime.current_executor = Some(executor);
                 drop(runtime);
                 unsafe {
                     // sstatus::set_sie();
                     trace!("switch weak executor");
-                    switch(runtime_cx as _, executor.context.get_context() as _);
+                    switch(runtime_cx as _, context as _);
                     trace!("switch weak executor return");
                     // sstatus::clear_sie();
                 }

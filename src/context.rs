@@ -16,9 +16,9 @@ impl Context {
 
     pub fn get_context_data(&self) -> &ContextData {
         unsafe {
-            let context = self.context as *const ContextData；
+            let context = self.context as *const ContextData;
             &*context
-        }   
+        }
     }
 
     #[cfg(target_arch = "x86_64")]
