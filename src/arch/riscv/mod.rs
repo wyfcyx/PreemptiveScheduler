@@ -20,6 +20,16 @@ pub(crate) fn cpu_id() -> u8 {
     cpu_id
 }
 
+use riscv::{asm, register::sstatus};
+
 pub(crate) fn wait_for_interrupt() {
-    // TODO
+    asm::wfi();
+}
+
+pub(crate) fn intr_on() {
+    unsafe { sstatus::set_sie() };
+}
+
+pub(crate) fn intr_off() {
+    unsafe { sstatus::clear_sie() };
 }

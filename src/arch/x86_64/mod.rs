@@ -13,14 +13,22 @@ extern "C" {
 }
 
 pub(crate) fn cpu_id() -> u8 {
-    let mut cpu_id = 0;
-    // TODO
-    // unsafe {
-    //     asm!("mov {0}, ", out(reg) cpu_id);
-    // }
-    cpu_id
+    raw_cpuid::CpuId::new()
+        .get_feature_info()
+        .unwrap()
+        .initial_local_apic_id() as u8
 }
 
+use x86_64::instructions::interrupts;
+
 pub(crate) fn wait_for_interrupt() {
-    // TODO
+    interrupts::hlt();
+}
+
+pub(crate) fn intr_on() {
+    interrupts::enable();
+}
+
+pub(crate) fn intr_off() {
+    interrupts::disable();
 }

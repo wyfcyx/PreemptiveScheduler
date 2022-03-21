@@ -1,4 +1,3 @@
-use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicU64, Ordering};
 use core::task::{RawWaker, RawWakerVTable};
@@ -92,18 +91,18 @@ pub struct WakerPage {
     /// by a wake and are ready to be polled again. The ith bit represents the ith future in the
     /// corresponding memory slab.
     notified: AtomicU64SC,
-    completed: AtomicU64SC,
+    // completed: AtomicU64SC,
     dropped: AtomicU64SC,
-    borrowed: AtomicU64SC,
+    // borrowed: AtomicU64SC,
 }
 
 impl WakerPage {
     pub fn new_inner() -> Self {
         WakerPage {
             notified: AtomicU64SC::new(0),
-            completed: AtomicU64SC::new(0),
+            // completed: AtomicU64SC::new(0),
             dropped: AtomicU64SC::new(0),
-            borrowed: AtomicU64SC::new(0),
+            // borrowed: AtomicU64SC::new(0),
         }
     }
 
@@ -114,7 +113,7 @@ impl WakerPage {
     pub fn initialize(&self, idx: usize) {
         debug_assert!(idx < 64);
         self.notified.fetch_or(1 << idx);
-        self.completed.fetch_and(!(1 << idx));
+        // self.completed.fetch_and(!(1 << idx));
         self.dropped.fetch_and(!(1 << idx));
     }
 
@@ -123,10 +122,10 @@ impl WakerPage {
         self.dropped.fetch_or(1 << idx);
     }
 
-    pub fn mark_complete(&self, idx: usize) {
-        debug_assert!(idx < 64);
-        self.completed.fetch_or(1 << idx);
-    }
+    // pub fn mark_complete(&self, idx: usize) {
+    //     debug_assert!(idx < 64);
+    //     self.completed.fetch_or(1 << idx);
+    // }
 
     pub fn notify(&self, offset: usize) {
         debug_assert!(offset < 64);
@@ -139,9 +138,9 @@ impl WakerPage {
         // Unset all ready bits, since spurious notifications for completed futures would lead
         // us to poll them after completion.
         let mut notified = self.notified.swap(0);
-        notified &= !self.completed.load();
+        // notified &= !self.completed.load();
         notified &= !self.dropped.load();
-        notified &= !self.borrowed.load();
+        // notified &= !self.borrowed.load();
         notified
     }
 
@@ -153,7 +152,7 @@ impl WakerPage {
         debug_assert!(idx < 64);
         let mask = !(1 << idx);
         self.notified.fetch_and(mask);
-        self.completed.fetch_and(mask);
+        // self.completed.fetch_and(mask);
         self.dropped.fetch_and(mask);
     }
 
@@ -164,6 +163,8 @@ impl WakerPage {
         }
     }
 }
+
+pub type DroperRef = WakerRef;
 
 pub struct WakerRef {
     page: Arc<WakerPage>,
@@ -178,6 +179,15 @@ impl WakerRef {
     fn wake(self) {
         self.wake_by_ref();
     }
+
+    // TODO: more elegent
+    pub fn drop_by_ref(&self) {
+        self.page.mark_dropped(self.idx)
+    }
+
+    // fn drop(self) {
+    //     self.drop_by_ref()
+    // }
 
     pub fn into_raw(self) -> RawWaker {
         let WakerRef { page, idx } = self;

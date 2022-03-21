@@ -12,7 +12,7 @@ pub struct ExecutorRuntime {
     cpu_id: u8,
 
     // 只会在一个 core 上运行，不需要考虑同步问题
-    task_collection: Arc<TaskCollection<Task>>,
+    task_collection: Arc<TaskCollection>,
 
     // 通过 force_switch_future 会将 strong_executor 降级为 weak_executor
     strong_executor: Arc<Pin<Box<Executor>>>,
@@ -66,7 +66,7 @@ impl ExecutorRuntime {
     }
 
     // 添加一个task，它的初始状态是 notified，也就是说它可以被执行.
-    fn add_task(&self, priority: usize, future: Task) -> Key {
+    fn add_task<F: Future<Output = ()> + 'static + Send>(&self, priority: usize, future: F) -> Key {
         debug_assert!(priority < MAX_PRIORITY);
         self.task_collection.add_task(future)
     }
@@ -94,19 +94,18 @@ lazy_static! {
     ];
 }
 
-static num: usize = 0;
-// obtain a task from other cpu.
-pub(crate) fn steal_task_from_other_cpu(
-) -> Option<(Key, Arc<WakerPage>, Pin<&'static mut Task>, Waker)> {
-    let runtime = GLOBAL_RUNTIME
-        .iter()
-        .max_by_key(|runtime| runtime.lock().task_num())
-        .unwrap();
-    let mut runtime = runtime.lock();
-    trace!("fewest_task_cpu_id:{}", runtime.cpu_id());
-    // TODO: ???, SAGETY?
-    unsafe { Arc::get_mut_unchecked(&mut runtime.task_collection).take_task() }
-}
+// static num: usize = 0;
+// // obtain a task from other cpu.
+// pub(crate) fn steal_task_from_other_cpu() -> Option<(Key, Arc<WakerPage>, &'static Task, Waker)> {
+//     let runtime = GLOBAL_RUNTIME
+//         .iter()
+//         .max_by_key(|runtime| runtime.lock().task_num())
+//         .unwrap();
+//     let runtime = runtime.lock();
+//     trace!("fewest_task_cpu_id:{}", runtime.cpu_id());
+//     // TODO: ???, SAGETY?
+//     runtime.task_collection.take_task()
+// }
 
 // per-cpu scheduler.
 pub fn run() {
@@ -184,7 +183,6 @@ pub fn spawn_task(
     cpu_id: Option<usize>,
 ) {
     let priority = priority.unwrap_or(DEFAULT_PRIORITY);
-    let task = Task::new(future, priority);
     let runtime = if let Some(cpu_id) = cpu_id {
         &GLOBAL_RUNTIME[cpu_id]
     } else {
@@ -193,7 +191,7 @@ pub fn spawn_task(
             .min_by_key(|runtime| runtime.lock().task_num())
             .unwrap()
     };
-    runtime.lock().add_task(priority, task);
+    runtime.lock().add_task(priority, future);
 }
 
 /// check whether the running coroutine of current cpu time out, if yes, we will
@@ -218,18 +216,16 @@ pub fn handle_timeout() {
 #[no_mangle]
 pub(crate) fn run_executor(executor_addr: usize) {
     trace!("run new executor: executor addr 0x{:x}", executor_addr);
-    unsafe {
-        let mut p = Box::from_raw(executor_addr as *mut Executor);
-        p.run();
+    let mut p = unsafe { Box::from_raw(executor_addr as *mut Executor) };
+    p.run();
 
-        let runtime = get_current_runtime();
-        let cx_ref = &runtime.context;
-        let executor_cx = &(p.context) as *const ThreadContext as usize;
-        let runtime_cx = cx_ref as *const ThreadContext as usize;
-        drop(runtime);
-        unsafe { crate::switch(executor_cx as _, runtime_cx as _) }
-        unreachable!();
-    }
+    let runtime = get_current_runtime();
+    let cx_ref = &runtime.context;
+    let executor_cx = &(p.context) as *const ThreadContext as usize;
+    let runtime_cx = cx_ref as *const ThreadContext as usize;
+    drop(runtime);
+    unsafe { crate::switch(executor_cx as _, runtime_cx as _) }
+    unreachable!();
 }
 
 /// switch to runtime, which would select an appropriate executor to run.

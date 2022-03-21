@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use crate::waker_page::{WakerPage, WAKER_PAGE_SIZE};
+use crate::waker_page::{DroperRef, WakerPage, WAKER_PAGE_SIZE};
 // use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec;
@@ -21,6 +21,9 @@ use {
     core::task::{Context, Poll},
 };
 
+use core::fmt::{Debug, Formatter, Result};
+
+// #[allow(unused)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskState {
     BLOCKED,
@@ -29,51 +32,64 @@ pub enum TaskState {
 }
 
 pub struct Task {
-    pub future: Mutex<Pin<Box<dyn Future<Output = ()> + Send>>>,
-    pub state: Mutex<TaskState>,
-    pub priority: usize,
+    future: Mutex<Pin<Box<dyn Future<Output = ()> + Send>>>,
+    inner: Mutex<TaskInner>,
 }
 
-impl Future for Task {
-    type Output = ();
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let mut f = self.future.lock();
-        f.as_mut().poll(cx)
+struct TaskInner {
+    priority: usize,
+    state: TaskState,
+}
+
+impl core::fmt::Debug for Task {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        let inner = self.inner.lock();
+        let mut f = f.debug_struct("X86PTE");
+        f.field("priority", &inner.priority);
+        f.field("state", &inner.state);
+        f.finish()
     }
 }
+
+// impl Future for Task {
+//     type Output = ();
+//     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+//         let mut f = self.future.lock();
+//         f.as_mut().poll(cx)
+//     }
+// }
 
 impl Task {
     pub fn new(future: impl Future<Output = ()> + Send + 'static, priority: usize) -> Self {
         Self {
             future: Mutex::new(Box::pin(future)),
-            state: Mutex::new(TaskState::RUNNABLE),
-            priority,
+            inner: Mutex::new(TaskInner {
+                priority,
+                state: TaskState::RUNNABLE,
+            }),
         }
     }
-    pub fn is_runnable(&self) -> bool {
-        let task_state = self.state.lock();
-        TaskState::RUNNABLE == *task_state
-    }
-
-    pub fn block(&self) {
-        let mut task_state = self.state.lock();
-        *task_state = TaskState::BLOCKED;
+    pub fn poll(&self, cx: &mut Context) -> Poll<()> {
+        let mut f = self.future.lock();
+        f.as_mut().poll(cx)
     }
 }
 
-pub struct FutureCollection<F: Future<Output = ()> + Unpin> {
-    pub slab: PinSlab<F>,
+pub struct FutureCollection {
+    pub slab: PinSlab<Arc<Task>>,
     // pub vec: VecDeque<Key>,
     // root_waker: SharedWaker,
     pub pages: Vec<Arc<WakerPage>>,
+    pub priority: usize,
 }
 
-impl<F: Future<Output = ()> + Unpin + 'static> FutureCollection<F> {
-    pub fn new() -> Self {
+impl FutureCollection {
+    pub fn new(priority: usize) -> Self {
         Self {
             slab: PinSlab::new(),
             // vec: VecDeque::new(),
             pages: vec![],
+            priority,
         }
     }
     /// Our pages hold 64 contiguous future wakers, so we can do simple arithmetic to access the
@@ -87,8 +103,8 @@ impl<F: Future<Output = ()> + Unpin + 'static> FutureCollection<F> {
 
     /// Insert a future into our scheduler returning an integer key representing this future. This
     /// key is used to index into the slab for accessing the future.
-    pub fn insert(&mut self, future: F) -> Key {
-        let key = self.slab.insert(future);
+    pub fn insert<F: Future<Output = ()> + 'static + Send>(&mut self, future: F) -> Key {
+        let key = self.slab.insert(Arc::new(Task::new(future, self.priority)));
         // Add a new page to hold this future's status if the current page is filled.
         while key >= self.pages.len() * WAKER_PAGE_SIZE {
             self.pages.push(WakerPage::new());
@@ -112,13 +128,13 @@ impl<F: Future<Output = ()> + Unpin + 'static> FutureCollection<F> {
     }
 }
 
-pub struct TaskCollection<F: Future<Output = ()> + Unpin + 'static> {
-    future_collections: Vec<RefCell<FutureCollection<F>>>,
+pub struct TaskCollection {
+    future_collections: Vec<RefCell<FutureCollection>>,
     task_num: AtomicUsize,
-    generator: Option<Mutex<Box<dyn Generator<Yield = Option<usize>, Return = ()>>>>,
+    generator: Option<Mutex<Box<dyn Generator<Yield = Option<Key>, Return = ()>>>>,
 }
 
-impl<F: Future<Output = ()> + Unpin + 'static> TaskCollection<F> {
+impl TaskCollection {
     pub fn new() -> Arc<Self> {
         let mut task_collection = Arc::new(TaskCollection {
             future_collections: Vec::with_capacity(MAX_PRIORITY),
@@ -128,9 +144,9 @@ impl<F: Future<Output = ()> + Unpin + 'static> TaskCollection<F> {
         // SAFETY: no other Arc or Weak pointers
         let tc_clone = task_collection.clone();
         let mut tc = unsafe { Arc::get_mut_unchecked(&mut task_collection) };
-        for _ in 0..MAX_PRIORITY {
+        for priority in 0..MAX_PRIORITY {
             tc.future_collections
-                .push(RefCell::new(FutureCollection::new()));
+                .push(RefCell::new(FutureCollection::new(priority)));
         }
         tc.generator = Some(Mutex::new(Box::new(TaskCollection::generator(tc_clone))));
         task_collection
@@ -148,7 +164,7 @@ impl<F: Future<Output = ()> + Unpin + 'static> TaskCollection<F> {
     // }
 
     /// 插入一个Future, 其优先级为 DEFAULT_PRIORITY
-    pub fn add_task(&self, future: F) -> usize {
+    pub fn add_task<F: Future<Output = ()> + 'static + Send>(&self, future: F) -> usize {
         self.priority_add_task(DEFAULT_PRIORITY, future)
     }
 
@@ -160,7 +176,11 @@ impl<F: Future<Output = ()> + Unpin + 'static> TaskCollection<F> {
         self.task_num.fetch_sub(1, Ordering::Relaxed);
     }
 
-    fn priority_add_task(&self, priority: usize, future: F) -> Key {
+    fn priority_add_task<F: Future<Output = ()> + 'static + Send>(
+        &self,
+        priority: usize,
+        future: F,
+    ) -> Key {
         debug_assert!(priority == DEFAULT_PRIORITY);
         let key = self.future_collections[priority]
             .borrow_mut()
@@ -170,7 +190,7 @@ impl<F: Future<Output = ()> + Unpin + 'static> TaskCollection<F> {
         key | (priority << PRIORITY_SHIFT)
     }
 
-    fn get_mut_inner(&self, priority: usize) -> RefMut<'_, FutureCollection<F>> {
+    fn get_mut_inner(&self, priority: usize) -> RefMut<'_, FutureCollection> {
         self.future_collections[priority].borrow_mut()
     }
 
@@ -178,33 +198,30 @@ impl<F: Future<Output = ()> + Unpin + 'static> TaskCollection<F> {
         self.task_num.load(Ordering::Relaxed)
     }
 
-    pub fn take_task(&mut self) -> Option<(usize, Arc<WakerPage>, Pin<&'static mut F>, Waker)> {
-        unsafe {
-            match Pin::new_unchecked(self.generator.as_ref().unwrap().lock().as_mut()).resume(()) {
-                GeneratorState::Yielded(key) => {
-                    if let Some(key) = key {
-                        let (priority, page_idx, subpage_idx) = unpack_key(key);
-                        let mut inner = self.get_mut_inner(priority);
-                        let pinned_ref = inner.slab.get_pin_mut(unmask_priority(key)).unwrap();
-                        // this unsafe block makes `pinned_ref` `static`
-                        // SAFETY: runtime will never be droped
-                        let pinned_ref_static = unsafe {
-                            let pinned_ptr = Pin::into_inner_unchecked(pinned_ref) as *mut F;
-                            Pin::new_unchecked(&mut *pinned_ptr)
-                        };
-                        let page_ref = inner.pages[page_idx].clone();
-                        let waker = Waker::from_raw(page_ref.make_waker(subpage_idx).into_raw());
-                        Some((key, page_ref, pinned_ref_static, waker))
-                    } else {
-                        None
-                    }
+    pub fn take_task(&self) -> Option<(Arc<Task>, Waker, DroperRef)> {
+        let mut generator = self.generator.as_ref().unwrap().lock();
+        match unsafe { Pin::new_unchecked(generator.as_mut()) }.resume(()) {
+            GeneratorState::Yielded(key) => {
+                if let Some(key) = key {
+                    let (priority, page_idx, subpage_idx) = unpack_key(key);
+                    let mut inner = self.get_mut_inner(priority);
+                    let page_ref = inner.pages[page_idx].clone();
+                    let task = inner.slab.get(unmask_priority(key)).unwrap();
+                    // SAFETY: runtime will never be droped
+                    let waker_ref = page_ref.make_waker(subpage_idx);
+                    let droper = waker_ref.clone();
+                    let waker =
+                        unsafe { Waker::from_raw(page_ref.make_waker(subpage_idx).into_raw()) };
+                    Some((task.clone(), waker, droper))
+                } else {
+                    None
                 }
-                _ => panic!("unexpected value from resume"),
             }
+            _ => panic!("unexpected value from resume"),
         }
     }
 
-    pub fn generator(self: Arc<Self>) -> impl Generator<Yield = Option<usize>, Return = ()> {
+    pub fn generator(self: Arc<Self>) -> impl Generator<Yield = Option<Key>, Return = ()> {
         static move || {
             loop {
                 // warn!("get mut inner: generator1 start");
@@ -270,7 +287,7 @@ pub mod key {
         key & !(0x1F << PRIORITY_SHIFT)
     }
 
-    pub fn get_pririty(key: Key) -> usize {
-        key >> PRIORITY_SHIFT
-    }
+    // pub fn get_pririty(key: Key) -> usize {
+    //     key >> PRIORITY_SHIFT
+    // }
 }
