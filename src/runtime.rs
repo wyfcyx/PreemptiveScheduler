@@ -1,6 +1,6 @@
 use crate::{
     arch::switch, context::Context as ThreadContext, executor::Executor, task_collection::*,
-    waker_page::WakerPage,
+    waker_page::DroperRef,
 };
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 use core::{future::Future, pin::Pin, task::Waker};
@@ -88,36 +88,38 @@ unsafe impl Sync for ExecutorRuntime {}
 
 // TODO: more elegent?
 lazy_static! {
-    pub static ref GLOBAL_RUNTIME: [Mutex<ExecutorRuntime>; 2] = [
+    pub static ref GLOBAL_RUNTIME: [Mutex<ExecutorRuntime>; 4] = [
         Mutex::new(ExecutorRuntime::new(0)),
-        Mutex::new(ExecutorRuntime::new(1))
+        Mutex::new(ExecutorRuntime::new(1)),
+        Mutex::new(ExecutorRuntime::new(2)),
+        Mutex::new(ExecutorRuntime::new(3))
     ];
 }
 
-// static num: usize = 0;
 // // obtain a task from other cpu.
-// pub(crate) fn steal_task_from_other_cpu() -> Option<(Key, Arc<WakerPage>, &'static Task, Waker)> {
+// pub(crate) fn steal_task_from_other_cpu() -> Option<(Arc<Task>, Waker, DroperRef)> {
 //     let runtime = GLOBAL_RUNTIME
 //         .iter()
 //         .max_by_key(|runtime| runtime.lock().task_num())
 //         .unwrap();
 //     let runtime = runtime.lock();
-//     trace!("fewest_task_cpu_id:{}", runtime.cpu_id());
+//     debug!("most_task_cpu_id:{}", runtime.cpu_id());
 //     // TODO: ???, SAGETY?
 //     runtime.task_collection.take_task()
 // }
 
 // per-cpu scheduler.
-pub fn run() {
-    trace!("GLOBAL_RUNTIME.run()");
+pub fn run_until_idle() {
+    debug!("GLOBAL_RUNTIME.run()");
     loop {
         let mut runtime = get_current_runtime();
         let runtime_cx = runtime.context.get_context();
         let executor_cx = runtime.strong_executor.context.get_context();
+        crate::intr_off();
         runtime.current_executor = Some(runtime.strong_executor.clone());
         // 释放保护 global_runtime 的锁
         drop(runtime);
-        trace!("run strong executor");
+        debug!("run strong executor");
         unsafe {
             switch(runtime_cx as _, executor_cx as _);
             // 该函数返回说明当前 strong_executor 执行的 future 超时或者主动 yield 了,
@@ -125,53 +127,54 @@ pub fn run() {
             // 新的 executor 作为 strong_executor，旧的 executor 添
             // 加到 weak_exector 中。
         }
-        trace!("switch return");
+        debug!("runtime switch return");
+        crate::intr_on();
         let mut runtime = get_current_runtime();
 
         // 只有 strong_executor 主动 yield 时, 才会执行运行 weak_executor;
         if runtime.strong_executor.is_running_future() {
             runtime.downgrade_strong_executor();
-            trace!("continued");
+            debug!("continued");
             continue;
         }
 
-        // 遍历全部的weak_executor
+        // 遍历全部的 weak_executor
         if runtime.weak_executor_vec.is_empty() {
             drop(runtime);
-            crate::wait_for_interrupt();
+            // crate::wait_for_interrupt();
             continue;
         }
-        trace!("run weak executor size={}", runtime.weak_executor_vec.len());
+        debug!("run weak executor size={}", runtime.weak_executor_vec.len());
+        runtime
+            .weak_executor_vec
+            .retain(|executor| executor.is_some() && !executor.as_ref().unwrap().killed());
         for idx in 0..runtime.weak_executor_vec.len() {
             if let Some(executor) = &runtime.weak_executor_vec[idx] {
                 if executor.killed() {
-                    // TODO: 回收资源
                     continue;
                 }
                 let executor = executor.clone();
                 let context = executor.context.get_context();
+                crate::intr_off();
                 runtime.current_executor = Some(executor);
                 drop(runtime);
                 unsafe {
-                    // sstatus::set_sie();
-                    trace!("switch weak executor");
+                    debug!("switch weak executor");
                     switch(runtime_cx as _, context as _);
-                    trace!("switch weak executor return");
-                    // sstatus::clear_sie();
+                    debug!("switch weak executor return");
                 }
-                trace!("global locking");
+                crate::intr_on();
                 runtime = get_current_runtime();
-                trace!("global locking finish");
             }
         }
-        trace!("run weak executor finish");
+        debug!("run weak executor finish");
     }
 }
 
 pub fn spawn(future: impl Future<Output = ()> + Send + 'static) {
-    trace!("spawn coroutine");
-    spawn_task(future, None, None);
-    trace!("spawn coroutine over");
+    debug!("spawn coroutine");
+    spawn_task(future, None, Some(crate::cpu_id() as _));
+    debug!("spawn coroutine over");
 }
 
 /// Spawn a coroutine with `priority` and `cpu_id`
@@ -198,45 +201,41 @@ pub fn spawn_task(
 /// switch to currrent cpu runtime that would create a new executor to run other
 /// coroutines.
 pub fn handle_timeout() {
-    trace!("handle timeout");
-    let runtime = get_current_runtime();
-    if runtime
-        .current_executor
-        .as_ref()
-        .unwrap()
-        .is_running_future()
-    {
-        drop(runtime);
-        yeild();
-        trace!("handle timeout return");
-    }
+    debug!("handle timeout");
+    // let runtime = get_current_runtime();
+    // if runtime
+    //     .current_executor
+    //     .as_ref()
+    //     .unwrap()
+    //     .is_running_future()
+    // {
+    //     drop(runtime);
+    //     sched_yield();
+    //     debug!("handle timeout return");
+    // }
 }
 
 /// 运行executor.run()
 #[no_mangle]
 pub(crate) fn run_executor(executor_addr: usize) {
-    trace!("run new executor: executor addr 0x{:x}", executor_addr);
+    error!("run new executor: executor addr 0x{:x}", executor_addr);
     let mut p = unsafe { Box::from_raw(executor_addr as *mut Executor) };
     p.run();
-
-    let runtime = get_current_runtime();
-    let cx_ref = &runtime.context;
-    let executor_cx = &(p.context) as *const ThreadContext as usize;
-    let runtime_cx = cx_ref as *const ThreadContext as usize;
-    drop(runtime);
-    unsafe { crate::switch(executor_cx as _, runtime_cx as _) }
-    unreachable!();
+    // Weak executor may return
+    sched_yield();
 }
 
 /// switch to runtime, which would select an appropriate executor to run.
-pub(crate) fn yeild() {
+pub fn sched_yield() {
     let runtime = get_current_runtime();
     let cx_ref = &runtime.context;
     let executor_cx =
         &(runtime.current_executor.as_ref().unwrap().context) as *const ThreadContext as usize;
     let runtime_cx = cx_ref as *const ThreadContext as usize;
     drop(runtime);
+    crate::intr_off();
     unsafe { crate::switch(executor_cx as _, runtime_cx as _) }
+    crate::intr_on();
 }
 
 /// return runtime `MutexGuard` of current cpu.

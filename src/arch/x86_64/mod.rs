@@ -22,7 +22,11 @@ pub(crate) fn cpu_id() -> u8 {
 use x86_64::instructions::interrupts;
 
 pub(crate) fn wait_for_interrupt() {
-    interrupts::hlt();
+    let enable = interrupts::are_enabled();
+    interrupts::enable_and_hlt();
+    if !enable {
+        interrupts::disable();
+    }
 }
 
 pub(crate) fn intr_on() {

@@ -48,7 +48,7 @@ impl Executor {
         let sp = pin_executor.init_stack();
         pin_executor.context.set_context(sp);
 
-        trace!(
+        debug!(
             "stack top 0x{:x} executor addr 0x{:x}",
             pin_executor.context.get_sp(),
             pin_executor.context.get_pc(),
@@ -80,41 +80,42 @@ impl Executor {
     }
 
     pub fn run(&mut self) {
-        trace!("new executor run, addr={:x}", self as *const _ as usize);
+        error!("new executor run, addr={:x}", self as *const _ as usize);
         loop {
-            let mut task_info = self.task_collection.take_task();
+            let task_info = self.task_collection.take_task();
             // if task_info.is_none() {
             //     task_info = crate::runtime::steal_task_from_other_cpu()
             // }
-            if let Some((task, waker, droper)) = self.task_collection.take_task() {
+            if let Some((task, waker, droper)) = task_info {
                 let mut cx = Context::from_waker(&waker);
                 // let pinned_ptr = unsafe { Pin::into_inner_unchecked(task) as *mut Task };
                 // let pinned_ref = unsafe { Pin::new_unchecked(&mut *pinned_ptr) };
                 crate::arch::intr_on(); // poll future时允许中断
                 self.is_running_future = true;
-                trace!("polling future");
+                error!("polling future");
                 let ret = task.poll(&mut cx);
-                trace!("polling future over");
+                ereror!("polling future over");
                 crate::arch::intr_off(); // 禁用中断
                 self.is_running_future = false;
 
                 if let ExecutorState::WEAK = self.state {
-                    info!("weak executor finish poll future, need killed");
+                    error!("weak executor finish poll future, need killed");
                     self.state = ExecutorState::KILLED;
                     return;
                 }
 
                 match ret {
                     Poll::Ready(()) => {
+                        error!("future return Ready, drop this future");
                         // self.task_collection.remove_task(key);
                         droper.drop_by_ref();
                     }
                     Poll::Pending => (),
                 }
             } else {
-                // trace!("no future to run, need yield");
-                crate::runtime::yeild();
-                // trace!("yield over");
+                error!("no future to run, need yield");
+                crate::runtime::sched_yield();
+                // debug!("yield over");
                 // unsafe {
                 //     crate::wait_for_interrupt();
                 // }

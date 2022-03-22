@@ -170,7 +170,7 @@ impl TaskCollection {
 
     /// remove the task correponding to the key.
     pub fn remove_task(&self, key: Key) {
-        trace!("remove task key = 0x{:x?}", key);
+        debug!("remove task key = 0x{:x?}", key);
         let mut inner = self.get_mut_inner(key >> PRIORITY_SHIFT);
         inner.remove(unmask_priority(key), true);
         self.task_num.fetch_sub(1, Ordering::Relaxed);
@@ -232,7 +232,7 @@ impl TaskCollection {
                     for page_idx in 0..inner.pages.len() {
                         let page = &inner.pages[page_idx];
                         let (notified, dropped) = (page.take_notified(), page.take_dropped());
-                        trace!("notified={}", notified);
+                        debug!("notified={}", notified);
                         if notified != 0 {
                             for subpage_idx in BitIter::from(notified) {
                                 // the key corresponding to the task
