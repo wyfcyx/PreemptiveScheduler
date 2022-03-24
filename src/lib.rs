@@ -30,4 +30,4 @@ mod task_collection;
 mod waker_page;
 
 pub(crate) use context::{Context, ContextData};
-pub use runtime::{handle_timeout, run, spawn, sched_yield};
+pub use runtime::{handle_timeout, run_until_idle, spawn, sched_yield};

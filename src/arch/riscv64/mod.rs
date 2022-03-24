@@ -1,4 +1,4 @@
-use core::arch::global_asm;
+use core::arch::{global_asm, asm};
 
 mod context;
 
@@ -15,15 +15,24 @@ extern "C" {
 pub(crate) fn cpu_id() -> u8 {
     let mut cpu_id;
     unsafe {
-        asm!("mv {0}, tp", out(reg) cpu_id);
+        asm!("mv {0}, tp", out(reg) cpu_id, options(nomem, nostack));
     }
     cpu_id
+}
+
+pub(crate) fn pg_base_addr() -> usize {
+    riscv::register::satp::read().ppn() << 12
+}
+
+pub(crate) fn pg_base_register() -> usize {
+    riscv::register::satp::read().bits()
 }
 
 use riscv::{asm, register::sstatus};
 
 pub(crate) fn wait_for_interrupt() {
-    asm::wfi();
+    // interrupt disable?
+    unsafe { asm::wfi() };
 }
 
 pub(crate) fn intr_on() {
@@ -32,4 +41,8 @@ pub(crate) fn intr_on() {
 
 pub(crate) fn intr_off() {
     unsafe { sstatus::clear_sie() };
+}
+
+pub(crate) fn intr_get() -> bool {
+    sstatus::read().sie()
 }

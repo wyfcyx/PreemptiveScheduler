@@ -118,8 +118,6 @@ impl FutureCollection {
     pub fn remove(&mut self, key: Key, _remove_vec: bool) {
         let (page, subpage_idx) = self.page(key);
         page.clear(subpage_idx);
-        // TODO ???
-        // self.slab.remove(key / WAKER_PAGE_SIZE);
         self.slab.remove(key);
         // Efficiency: remove should be called rarely
         // if remove_vec {
@@ -205,13 +203,11 @@ impl TaskCollection {
                 if let Some(key) = key {
                     let (priority, page_idx, subpage_idx) = unpack_key(key);
                     let mut inner = self.get_mut_inner(priority);
-                    let page_ref = inner.pages[page_idx].clone();
-                    let task = inner.slab.get(unmask_priority(key)).unwrap();
-                    // SAFETY: runtime will never be droped
-                    let waker_ref = page_ref.make_waker(subpage_idx);
+                    let waker_ref = inner.pages[page_idx].make_waker(subpage_idx);
                     let droper = waker_ref.clone();
                     let waker =
-                        unsafe { Waker::from_raw(page_ref.make_waker(subpage_idx).into_raw()) };
+                        unsafe { Waker::from_raw(waker_ref.into_raw()) };
+                    let task = inner.slab.get(unmask_priority(key)).unwrap();
                     Some((task.clone(), waker, droper))
                 } else {
                     None
@@ -224,7 +220,6 @@ impl TaskCollection {
     pub fn generator(self: Arc<Self>) -> impl Generator<Yield = Option<Key>, Return = ()> {
         static move || {
             loop {
-                // warn!("get mut inner: generator1 start");
                 let priority = DEFAULT_PRIORITY;
                 loop {
                     let mut found_key: Option<Key> = None;
@@ -242,6 +237,7 @@ impl TaskCollection {
                                 inner = self.get_mut_inner(priority);
                             }
                         }
+                        debug!("droped = {}", dropped);
                         if dropped != 0 {
                             for subpage_idx in BitIter::from(dropped) {
                                 // the key corresponding to the task
@@ -286,8 +282,4 @@ pub mod key {
     pub fn unmask_priority(key: Key) -> usize {
         key & !(0x1F << PRIORITY_SHIFT)
     }
-
-    // pub fn get_pririty(key: Key) -> usize {
-    //     key >> PRIORITY_SHIFT
-    // }
 }

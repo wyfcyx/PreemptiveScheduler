@@ -32,6 +32,12 @@ impl Context {
         context_data.rip
     }
 
+    #[cfg(target_arch = "x86_64")]
+    pub fn get_pgbr(&self) -> usize {
+        let context_data = self.get_context_data();
+        context_data.cr3
+    }
+
     #[cfg(target_arch = "riscv64")]
     pub fn get_sp(&self) -> usize {
         let context_data = self.get_context_data();
@@ -42,5 +48,11 @@ impl Context {
     pub fn get_pc(&self) -> usize {
         let context_data = self.get_context_data();
         context_data.ra
+    }
+
+    #[cfg(target_arch = "riscv64")]
+    pub fn get_pgbr(&self) -> usize {
+        let context_data = self.get_context_data();
+        context_data.satp
     }
 }

@@ -14,7 +14,7 @@ use crate::task_collection::TaskCollection;
 #[derive(Debug, PartialEq, Eq)]
 enum ExecutorState {
     STRONG,
-    WEAK, // 执行完一次future后就需要被drop
+    WEAK,       // 执行完一次future后就需要被drop
     KILLED,
     UNUSED,
 }
@@ -49,9 +49,10 @@ impl Executor {
         pin_executor.context.set_context(sp);
 
         debug!(
-            "stack top 0x{:x} executor addr 0x{:x}",
+            "stack top 0x{:x} executor addr 0x{:x}, pgbr = 0x{:x}",
             pin_executor.context.get_sp(),
             pin_executor.context.get_pc(),
+            pin_executor.context.get_pgbr(),
         );
         pin_executor
     }
@@ -64,23 +65,26 @@ impl Executor {
         #[cfg(target_arch = "riscv64")]
         {
             const SUM: usize = 1 << 18;
-            const SIE: usize = 1 << 1;
-            let sstatus = SUM | SIE;
-            stack_top = push_stack(stack_top, sstatus);
+            // const SIE: usize = 1 << 1;
+            let sstatus = SUM;
+            stack_top = unsafe { push_stack(stack_top, sstatus) };
         }
         #[cfg(target_arch = "x86_64")]
         {
-            const IF: usize = 1 << 9;
-            let rflags = IF;
+            // const IF: usize = 1 << 9;
+            let rflags = 0;
             stack_top = unsafe { push_stack(stack_top, rflags) };
         }
-        let context_data = ContextData::new(executor_entry as *const () as usize, stack_top);
+        let context_data = ContextData::new(
+            executor_entry as *const () as usize, 
+            stack_top, 
+            crate::pg_base_register(),
+        );
         stack_top = unsafe { push_stack(stack_top, context_data) };
         stack_top
     }
 
     pub fn run(&mut self) {
-        error!("new executor run, addr={:x}", self as *const _ as usize);
         loop {
             let task_info = self.task_collection.take_task();
             // if task_info.is_none() {
@@ -90,35 +94,39 @@ impl Executor {
                 let mut cx = Context::from_waker(&waker);
                 // let pinned_ptr = unsafe { Pin::into_inner_unchecked(task) as *mut Task };
                 // let pinned_ref = unsafe { Pin::new_unchecked(&mut *pinned_ptr) };
-                crate::arch::intr_on(); // poll future时允许中断
                 self.is_running_future = true;
-                error!("polling future");
+                // debug!("polling future");
                 let ret = task.poll(&mut cx);
-                ereror!("polling future over");
-                crate::arch::intr_off(); // 禁用中断
+                // debug!("polling future over");
                 self.is_running_future = false;
 
                 if let ExecutorState::WEAK = self.state {
-                    error!("weak executor finish poll future, need killed");
                     self.state = ExecutorState::KILLED;
                     return;
                 }
 
                 match ret {
                     Poll::Ready(()) => {
-                        error!("future return Ready, drop this future");
                         // self.task_collection.remove_task(key);
                         droper.drop_by_ref();
                     }
                     Poll::Pending => (),
                 }
             } else {
-                error!("no future to run, need yield");
-                crate::runtime::sched_yield();
+                let runtime = crate::runtime::get_current_runtime();
+                let has_other_task = runtime.weak_executor_num() != 0;
+                drop(runtime);
+                if has_other_task {
+                    error!("no future to run, need yield");
+                    crate::runtime::sched_yield();
+                } else {
+                    error!("no other tasks, wait for interrupt, intr = {}", crate::arch::intr_get());
+                    unsafe {
+                        crate::arch::wait_for_interrupt();
+                    }
+                }
+                // debug!("switch back to strong executor");
                 // debug!("yield over");
-                // unsafe {
-                //     crate::wait_for_interrupt();
-                // }
             }
         }
     }

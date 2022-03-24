@@ -2,6 +2,7 @@ use alloc::sync::Arc;
 use core::sync::atomic::{AtomicU64, Ordering};
 use core::task::{RawWaker, RawWakerVTable};
 
+#[derive(Debug)]
 pub struct AtomicU64SC(AtomicU64);
 pub const WAKER_PAGE_SIZE: usize = 64;
 
@@ -85,6 +86,7 @@ impl AtomicU64SC {
 /// scheduler. So we use 64bit integers where the ith bit represents the ith future. Pages are
 /// arranged by the scheduler in a `pages` vector of pages which grows as needed allocating space
 /// for 64 more futures at a time.
+#[derive(Debug)]
 #[repr(align(64))]
 pub struct WakerPage {
     /// A 64 element bit vector representing the futures for this page which have been notified
@@ -180,14 +182,10 @@ impl WakerRef {
         self.wake_by_ref();
     }
 
-    // TODO: more elegent
+    // TODO: more elegent - remove this pub
     pub fn drop_by_ref(&self) {
         self.page.mark_dropped(self.idx)
     }
-
-    // fn drop(self) {
-    //     self.drop_by_ref()
-    // }
 
     pub fn into_raw(self) -> RawWaker {
         let WakerRef { page, idx } = self;
@@ -219,7 +217,10 @@ mod raw_waker {
     use super::*;
 
     fn waker_ref_clone(data: *const ()) -> RawWaker {
-        RawWaker::new(data, &VTABLE)
+        let waker = WakerRef::form_raw(data);
+        let cw = waker.clone();
+        core::mem::forget(waker);
+        cw.into_raw()
     }
 
     fn waker_ref_wake(data: *const ()) {

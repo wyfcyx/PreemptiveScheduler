@@ -6,13 +6,16 @@ pub struct ContextData {
     pub sp: usize,
     // callee saved registers
     pub s: [usize; 12],
+    // pg base register
+    pub satp: usize,
 }
 
 impl ContextData {
-    pub fn new(ra: usize, sp: usize) -> Self {
+    pub fn new(ra: usize, sp: usize, satp: usize) -> Self {
         Self {
-            ra: ra,
-            sp: sp,
+            ra,
+            sp,
+            satp,
             ..ContextData::default()
         }
     }
