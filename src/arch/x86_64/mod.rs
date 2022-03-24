@@ -1,4 +1,4 @@
-use core::arch::global_asm;
+use core::arch::{global_asm, asm};
 
 mod context;
 

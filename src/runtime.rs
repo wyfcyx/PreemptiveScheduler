@@ -1,5 +1,5 @@
 use crate::{
-    context::{ ContextData, Context as ThreadContext} , executor::Executor, task_collection::*,
+    context::ContextData, executor::Executor, task_collection::*,
     waker_page::DroperRef,
 };
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
@@ -31,15 +31,14 @@ impl ExecutorRuntime {
     pub fn new(cpu_id: u8) -> Self {
         let task_collection = TaskCollection::new();
         let tc_clone = task_collection.clone();
-        let e = ExecutorRuntime {
-            cpu_id: cpu_id,
+        ExecutorRuntime {
+            cpu_id,
             task_collection: task_collection,
             strong_executor: Arc::new(Executor::new(tc_clone)),
             weak_executor_vec: vec![],
             current_executor: None,
             context_data: ContextData::default(),
-        };
-        e
+        }
     }
 
     pub fn cpu_id(&self) -> u8 {
@@ -162,11 +161,9 @@ pub fn run_until_idle() {
                 let executor_ctx = executor.context.get_context();
                 runtime.current_executor = Some(executor);
                 drop(runtime);
-                unsafe {
-                    // trace!("switch weak executor");
-                    switch(runtime_cx as _, executor_ctx as _);
-                    // trace!("switch weak executor return");
-                }
+                // trace!("switch weak executor");
+                switch(runtime_cx as _, executor_ctx as _);
+                // trace!("switch weak executor return");
                 runtime = get_current_runtime();
             }
         }

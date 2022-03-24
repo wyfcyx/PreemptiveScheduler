@@ -199,7 +199,7 @@ impl WakerRef {
         let ptr = data as usize & !(0x3F);
         WakerRef {
             page: unsafe { Arc::from_raw(ptr as _) },
-            idx: idx,
+            idx,
         }
     }
 }

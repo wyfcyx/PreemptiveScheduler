@@ -109,7 +109,7 @@ impl FutureCollection {
         while key >= self.pages.len() * WAKER_PAGE_SIZE {
             self.pages.push(WakerPage::new());
         }
-        let (page, subpage_idx) = self.page(key.into());
+        let (page, subpage_idx) = self.page(key);
         page.initialize(subpage_idx);
         // self.vec.push_back(key);
         key

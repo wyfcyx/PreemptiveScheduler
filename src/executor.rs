@@ -38,8 +38,8 @@ impl Executor {
             .cast();
         let stack_base = stack.as_ptr() as usize;
         let mut pin_executor = Pin::new(Box::new(Executor {
-            task_collection: task_collection,
-            stack_base: stack_base,
+            task_collection,
+            stack_base,
             context: ExecuterContext::default(),
             is_running_future: false,
             state: ExecutorState::UNUSED,
@@ -121,9 +121,7 @@ impl Executor {
                     crate::runtime::sched_yield();
                 } else {
                     error!("no other tasks, wait for interrupt, intr = {}", crate::arch::intr_get());
-                    unsafe {
-                        crate::arch::wait_for_interrupt();
-                    }
+                    crate::arch::wait_for_interrupt();
                 }
                 // debug!("switch back to strong executor");
                 // debug!("yield over");
