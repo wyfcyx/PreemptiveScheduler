@@ -117,13 +117,10 @@ impl Executor {
                 let has_other_task = runtime.weak_executor_num() != 0;
                 drop(runtime);
                 if has_other_task {
-                    error!("no future to run, need yield");
+                    trace!("no future to run, need yield");
                     crate::runtime::sched_yield();
                 } else {
-                    error!(
-                        "no other tasks, wait for interrupt, intr = {}",
-                        crate::arch::intr_get()
-                    );
+                    trace!("no other tasks, wait for interrupt");
                     crate::arch::wait_for_interrupt();
                 }
                 // debug!("switch back to strong executor");
