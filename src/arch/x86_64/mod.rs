@@ -1,4 +1,4 @@
-use core::arch::{global_asm, asm};
+use core::arch::{asm, global_asm};
 
 mod context;
 
@@ -20,7 +20,10 @@ pub(crate) fn cpu_id() -> u8 {
 }
 
 pub(crate) fn pg_base_addr() -> usize {
-    x86_64::registers::control::Cr3::read().0.start_address().as_u64() as _
+    x86_64::registers::control::Cr3::read()
+        .0
+        .start_address()
+        .as_u64() as _
 }
 
 pub(crate) fn pg_base_register() -> usize {

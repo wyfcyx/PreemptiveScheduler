@@ -14,7 +14,7 @@ use crate::task_collection::TaskCollection;
 #[derive(Debug, PartialEq, Eq)]
 enum ExecutorState {
     STRONG,
-    WEAK,       // 执行完一次future后就需要被drop
+    WEAK, // 执行完一次future后就需要被drop
     KILLED,
     UNUSED,
 }
@@ -76,8 +76,8 @@ impl Executor {
             stack_top = unsafe { push_stack(stack_top, rflags) };
         }
         let context_data = ContextData::new(
-            executor_entry as *const () as usize, 
-            stack_top, 
+            executor_entry as *const () as usize,
+            stack_top,
             crate::pg_base_register(),
         );
         stack_top = unsafe { push_stack(stack_top, context_data) };
@@ -120,7 +120,10 @@ impl Executor {
                     error!("no future to run, need yield");
                     crate::runtime::sched_yield();
                 } else {
-                    error!("no other tasks, wait for interrupt, intr = {}", crate::arch::intr_get());
+                    error!(
+                        "no other tasks, wait for interrupt, intr = {}",
+                        crate::arch::intr_get()
+                    );
                     crate::arch::wait_for_interrupt();
                 }
                 // debug!("switch back to strong executor");

@@ -205,8 +205,7 @@ impl TaskCollection {
                     let mut inner = self.get_mut_inner(priority);
                     let waker_ref = inner.pages[page_idx].make_waker(subpage_idx);
                     let droper = waker_ref.clone();
-                    let waker =
-                        unsafe { Waker::from_raw(waker_ref.into_raw()) };
+                    let waker = unsafe { Waker::from_raw(waker_ref.into_raw()) };
                     let task = inner.slab.get(unmask_priority(key)).unwrap();
                     Some((task.clone(), waker, droper))
                 } else {

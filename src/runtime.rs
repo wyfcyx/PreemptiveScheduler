@@ -1,7 +1,4 @@
-use crate::{
-    context::ContextData, executor::Executor, task_collection::*,
-    waker_page::DroperRef,
-};
+use crate::{context::ContextData, executor::Executor, task_collection::*, waker_page::DroperRef};
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 use core::{future::Future, pin::Pin, task::Waker};
 use lazy_static::*;
@@ -116,14 +113,14 @@ lazy_static! {
 // }
 
 // per-cpu scheduler.
-pub fn run_until_idle() {
+pub fn run_until_idle() -> bool {
     debug!("GLOBAL_RUNTIME.run()");
-    crate::intr_off();  // runtime can't be interrupted
+    crate::intr_off(); // runtime can't be interrupted
     loop {
         let mut runtime = get_current_runtime();
         let runtime_cx = runtime.get_context();
         let executor_cx = runtime.strong_executor.context.get_context();
-        
+
         runtime.current_executor = Some(runtime.strong_executor.clone());
         // 释放保护 global_runtime 的锁
         drop(runtime);
@@ -167,7 +164,9 @@ pub fn run_until_idle() {
                 runtime = get_current_runtime();
             }
         }
-        // trace!("run weak executor finish");
+        if runtime.task_num() == 0 {
+            return false;
+        }
     }
 }
 
@@ -247,7 +246,9 @@ pub(crate) fn switch(from_ctx: usize, to_ctx: usize) {
     if intr_enable {
         crate::intr_off();
     }
-    unsafe { crate::switch(from_ctx as _, to_ctx as _); }
+    unsafe {
+        crate::switch(from_ctx as _, to_ctx as _);
+    }
     if intr_enable {
         crate::intr_on();
     }
