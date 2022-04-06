@@ -90,14 +90,14 @@ impl Executor {
             // if task_info.is_none() {
             //     task_info = crate::runtime::steal_task_from_other_cpu()
             // }
-            if let Some((task, waker, droper)) = task_info {
+            if let Some((_key, task, waker_ref, droper)) = task_info {
+                let waker = Arc::new(waker_ref);
+                let waker = woke::waker_ref(&waker);
                 let mut cx = Context::from_waker(&waker);
                 self.is_running_future = true;
-                // debug!("polling future");
                 crate::arch::intr_on();
                 let ret = task.poll(&mut cx);
                 crate::arch::intr_off();
-                // debug!("polling future over");
                 self.is_running_future = false;
 
                 if let ExecutorState::WEAK = self.state {

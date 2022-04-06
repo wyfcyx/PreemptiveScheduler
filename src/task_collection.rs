@@ -1,15 +1,13 @@
-use crate::waker_page::{DroperRef, WakerPage, WAKER_PAGE_SIZE};
+use crate::waker_page::{DroperRef, WakerPage, WakerRef, WAKER_PAGE_SIZE};
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use bit_iter::BitIter;
 use core::cell::RefCell;
 use core::ops::{Generator, GeneratorState};
-use core::sync::atomic::{AtomicUsize, Ordering};
-use core::task::Waker;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use spin::Mutex;
 use unicycle::pin_slab::PinSlab;
-
 use {
     alloc::boxed::Box,
     core::cell::RefMut,
@@ -31,6 +29,7 @@ pub enum TaskState {
 pub struct Task {
     future: Mutex<Pin<Box<dyn Future<Output = ()> + Send>>>,
     inner: Mutex<TaskInner>,
+    finish: Arc<AtomicBool>,
 }
 
 struct TaskInner {
@@ -48,14 +47,6 @@ impl core::fmt::Debug for Task {
     }
 }
 
-// impl Future for Task {
-//     type Output = ();
-//     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-//         let mut f = self.future.lock();
-//         f.as_mut().poll(cx)
-//     }
-// }
-
 impl Task {
     pub fn new(future: impl Future<Output = ()> + Send + 'static, priority: usize) -> Self {
         Self {
@@ -64,6 +55,7 @@ impl Task {
                 priority,
                 state: TaskState::RUNNABLE,
             }),
+            finish: Arc::new(AtomicBool::new(false)),
         }
     }
     pub fn poll(&self, cx: &mut Context) -> Poll<()> {
@@ -115,7 +107,7 @@ impl FutureCollection {
     pub fn remove(&mut self, key: Key, _remove_vec: bool) {
         let (page, subpage_idx) = self.page(key);
         page.clear(subpage_idx);
-        self.slab.remove(key);
+        self.slab.remove(unmask_priority(key));
         // Efficiency: remove should be called rarely
         // if remove_vec {
         //     // self.vec.retain(|&x| x != key);
@@ -182,18 +174,17 @@ impl TaskCollection {
         self.task_num.load(Ordering::Relaxed)
     }
 
-    pub fn take_task(&self) -> Option<(Arc<Task>, Waker, DroperRef)> {
+    pub fn take_task(&self) -> Option<(Key, Arc<Task>, WakerRef, DroperRef)> {
         let mut generator = self.generator.as_ref().unwrap().lock();
         match generator.as_mut().resume(()) {
             GeneratorState::Yielded(key) => {
                 if let Some(key) = key {
                     let (priority, page_idx, subpage_idx) = unpack_key(key);
                     let mut inner = self.get_mut_inner(priority);
-                    let waker_ref = inner.pages[page_idx].make_waker(subpage_idx);
-                    let droper = waker_ref.clone();
-                    let waker = unsafe { Waker::from_raw(waker_ref.into_raw()) };
-                    let task = inner.slab.get(unmask_priority(key)).unwrap();
-                    Some((task.clone(), waker, droper))
+                    let task = inner.slab.get(unmask_priority(key)).unwrap().clone();
+                    let waker = inner.pages[page_idx].make_waker(subpage_idx, &task.finish);
+                    let droper = waker.clone();
+                    Some((key, task, waker, droper))
                 } else {
                     None
                 }
@@ -211,8 +202,8 @@ impl TaskCollection {
                     let mut inner = self.get_mut_inner(priority);
                     for page_idx in 0..inner.pages.len() {
                         let page = &inner.pages[page_idx];
-                        let (notified, dropped) = (page.take_notified(), page.take_dropped());
-                        debug!("notified={}", notified);
+                        let notified = page.take_notified();
+                        let dropped = page.take_dropped();
                         if notified != 0 {
                             for subpage_idx in BitIter::from(notified) {
                                 // the key corresponding to the task
@@ -222,7 +213,6 @@ impl TaskCollection {
                                 inner = self.get_mut_inner(priority);
                             }
                         }
-                        debug!("droped = {}", dropped);
                         if dropped != 0 {
                             for subpage_idx in BitIter::from(dropped) {
                                 // the key corresponding to the task

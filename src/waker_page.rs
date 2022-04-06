@@ -1,6 +1,7 @@
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicU64, Ordering};
-use core::task::{RawWaker, RawWakerVTable};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+// use core::task::{RawWaker, RawWakerVTable};
+use woke::Woke;
 
 #[derive(Debug)]
 pub struct AtomicU64SC(AtomicU64);
@@ -158,10 +159,11 @@ impl WakerPage {
         self.dropped.fetch_and(mask);
     }
 
-    pub fn make_waker(self: &Arc<Self>, idx: usize) -> WakerRef {
+    pub fn make_waker(self: &Arc<Self>, idx: usize, dropped: &Arc<AtomicBool>) -> WakerRef {
         WakerRef {
             page: self.clone(),
             idx,
+            dropped: dropped.clone(),
         }
     }
 }
@@ -171,35 +173,47 @@ pub type DroperRef = WakerRef;
 pub struct WakerRef {
     page: Arc<WakerPage>,
     idx: usize,
+    dropped: Arc<AtomicBool>,
 }
 
 impl WakerRef {
     pub fn wake_by_ref(&self) {
-        self.page.notify(self.idx);
+        if !self.dropped.load(Ordering::SeqCst) {
+            self.page.notify(self.idx);
+        }
     }
 
-    pub fn wake(self) {
-        self.wake_by_ref();
-    }
+    // pub fn wake(self) {
+    //     self.wake_by_ref();
+    // }
 
     pub fn drop_by_ref(&self) {
-        self.page.mark_dropped(self.idx)
-    }
-
-    pub fn into_raw(self) -> RawWaker {
-        let WakerRef { page, idx } = self;
-        let ptr = Arc::into_raw(page);
-        assert!((ptr as usize % 64) == 0 && idx < 64);
-        RawWaker::new((ptr as usize + idx) as _, &raw_waker::VTABLE)
-    }
-
-    pub fn form_raw(data: *const ()) -> Self {
-        let idx = data as usize & 0x3F;
-        let ptr = data as usize & !(0x3F);
-        WakerRef {
-            page: unsafe { Arc::from_raw(ptr as _) },
-            idx,
+        if !self.dropped.swap(true, Ordering::SeqCst) {
+            self.page.mark_dropped(self.idx);
         }
+    }
+
+    // pub fn into_raw(self) -> RawWaker {
+    //     let WakerRef { page, idx } = self;
+    //     let ptr = Arc::into_raw(page);
+    //     assert!((ptr as usize % 64) == 0 && idx < 64);
+    //     RawWaker::new((ptr as usize + idx) as _, &raw_waker::VTABLE)
+    // }
+
+    // pub fn form_raw(data: *const ()) -> Self {
+    //     let idx = data as usize & 0x3F;
+    //     let ptr = data as usize & !(0x3F);
+    //     WakerRef {
+    //         page: unsafe { Arc::from_raw(ptr as _) },
+    //         idx,
+    //         dropped: Arc::new(AtomicBool::new(false)),
+    //     }
+    // }
+}
+
+impl Woke for WakerRef {
+    fn wake_by_ref(waker: &Arc<Self>) {
+        waker.wake_by_ref();
     }
 }
 
@@ -208,40 +222,41 @@ impl Clone for WakerRef {
         WakerRef {
             page: self.page.clone(),
             idx: self.idx,
+            dropped: self.dropped.clone(),
         }
     }
 }
 
-mod raw_waker {
-    use super::*;
+// mod raw_waker {
+//     use super::*;
 
-    fn waker_ref_clone(data: *const ()) -> RawWaker {
-        let waker = WakerRef::form_raw(data);
-        let cw = waker.clone();
-        core::mem::forget(waker);
-        cw.into_raw()
-    }
+//     fn waker_ref_clone(data: *const ()) -> RawWaker {
+//         let waker = WakerRef::form_raw(data);
+//         let cw = waker.clone();
+//         core::mem::forget(waker);
+//         cw.into_raw()
+//     }
 
-    fn waker_ref_wake(data: *const ()) {
-        let waker = WakerRef::form_raw(data);
-        waker.wake();
-    }
+//     fn waker_ref_wake(data: *const ()) {
+//         let waker = WakerRef::form_raw(data);
+//         waker.wake();
+//     }
 
-    fn waker_ref_wake_by_ref(data: *const ()) {
-        let waker = WakerRef::form_raw(data);
-        waker.wake_by_ref();
-        core::mem::forget(waker);
-    }
+//     fn waker_ref_wake_by_ref(data: *const ()) {
+//         let waker = WakerRef::form_raw(data);
+//         waker.wake_by_ref();
+//         core::mem::forget(waker);
+//     }
 
-    fn waker_ref_drop(data: *const ()) {
-        let waker = WakerRef::form_raw(data);
-        drop(waker)
-    }
+//     fn waker_ref_drop(data: *const ()) {
+//         let waker = WakerRef::form_raw(data);
+//         drop(waker)
+//     }
 
-    pub(super) const VTABLE: RawWakerVTable = RawWakerVTable::new(
-        waker_ref_clone,
-        waker_ref_wake,
-        waker_ref_wake_by_ref,
-        waker_ref_drop,
-    );
-}
+//     pub(super) const VTABLE: RawWakerVTable = RawWakerVTable::new(
+//         waker_ref_clone,
+//         waker_ref_wake,
+//         waker_ref_wake_by_ref,
+//         waker_ref_drop,
+//     );
+// }
