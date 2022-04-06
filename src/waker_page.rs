@@ -174,15 +174,14 @@ pub struct WakerRef {
 }
 
 impl WakerRef {
-    fn wake_by_ref(&self) {
+    pub fn wake_by_ref(&self) {
         self.page.notify(self.idx);
     }
 
-    fn wake(self) {
+    pub fn wake(self) {
         self.wake_by_ref();
     }
 
-    // TODO: more elegent - remove this pub
     pub fn drop_by_ref(&self) {
         self.page.mark_dropped(self.idx)
     }

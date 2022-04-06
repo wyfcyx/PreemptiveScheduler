@@ -48,7 +48,7 @@ impl Executor {
         let sp = pin_executor.init_stack();
         pin_executor.context.set_context(sp);
 
-        debug!(
+        trace!(
             "stack top 0x{:x} executor addr 0x{:x}, pgbr = 0x{:x}",
             pin_executor.context.get_sp(),
             pin_executor.context.get_pc(),
@@ -66,15 +66,15 @@ impl Executor {
         {
             const SUM: usize = 1 << 18;
             // const SIE: usize = 1 << 1;
-            let sstatus = SUM;
+            let sstatus: usize = SUM;
             stack_top = unsafe { push_stack(stack_top, sstatus) };
         }
-        #[cfg(target_arch = "x86_64")]
-        {
-            // const IF: usize = 1 << 9;
-            let rflags = 0;
-            stack_top = unsafe { push_stack(stack_top, rflags) };
-        }
+        // #[cfg(target_arch = "x86_64")]
+        // {
+        //     // const IF: usize = 1 << 9;
+        //     let rflags: usize = 0;
+        //     stack_top = unsafe { push_stack(stack_top, rflags) };
+        // }
         let context_data = ContextData::new(
             executor_entry as *const () as usize,
             stack_top,
@@ -92,11 +92,11 @@ impl Executor {
             // }
             if let Some((task, waker, droper)) = task_info {
                 let mut cx = Context::from_waker(&waker);
-                // let pinned_ptr = unsafe { Pin::into_inner_unchecked(task) as *mut Task };
-                // let pinned_ref = unsafe { Pin::new_unchecked(&mut *pinned_ptr) };
                 self.is_running_future = true;
                 // debug!("polling future");
+                crate::arch::intr_on();
                 let ret = task.poll(&mut cx);
+                crate::arch::intr_off();
                 // debug!("polling future over");
                 self.is_running_future = false;
 
@@ -123,8 +123,6 @@ impl Executor {
                     trace!("no other tasks, wait for interrupt");
                     crate::arch::wait_for_interrupt();
                 }
-                // debug!("switch back to strong executor");
-                // debug!("yield over");
             }
         }
     }

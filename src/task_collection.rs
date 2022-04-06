@@ -1,7 +1,4 @@
-extern crate alloc;
-
 use crate::waker_page::{DroperRef, WakerPage, WAKER_PAGE_SIZE};
-// use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -129,7 +126,7 @@ impl FutureCollection {
 pub struct TaskCollection {
     future_collections: Vec<RefCell<FutureCollection>>,
     task_num: AtomicUsize,
-    generator: Option<Mutex<Box<dyn Generator<Yield = Option<Key>, Return = ()>>>>,
+    generator: Option<Mutex<Pin<Box<dyn Generator<Yield = Option<Key>, Return = ()>>>>>,
 }
 
 impl TaskCollection {
@@ -146,20 +143,9 @@ impl TaskCollection {
             tc.future_collections
                 .push(RefCell::new(FutureCollection::new(priority)));
         }
-        tc.generator = Some(Mutex::new(Box::new(TaskCollection::generator(tc_clone))));
+        tc.generator = Some(Mutex::new(Box::pin(TaskCollection::generator(tc_clone))));
         task_collection
     }
-
-    // /// return the `key` corresponding priority, `WakerPage` and subpage_idx.
-    // /// key layout:
-    // /// 0-6: subpage_idx in page.
-    // /// 6-59: page index in `TaskCollection.pages`.
-    // /// 59-64: priority.
-    // fn parse_key(&self, key: Key) -> (usize, &Arc<WakerPage>, usize) {
-    //     let (priority, page_idx, subpage_idx) = unpack_key(key);
-    //     let inner = self.get_mut_inner(priority);
-    //     (priority, &inner.pages[page_idx], subpage_idx)
-    // }
 
     /// 插入一个Future, 其优先级为 DEFAULT_PRIORITY
     pub fn add_task<F: Future<Output = ()> + 'static + Send>(&self, future: F) -> usize {
@@ -198,7 +184,7 @@ impl TaskCollection {
 
     pub fn take_task(&self) -> Option<(Arc<Task>, Waker, DroperRef)> {
         let mut generator = self.generator.as_ref().unwrap().lock();
-        match unsafe { Pin::new_unchecked(generator.as_mut()) }.resume(()) {
+        match generator.as_mut().resume(()) {
             GeneratorState::Yielded(key) => {
                 if let Some(key) = key {
                     let (priority, page_idx, subpage_idx) = unpack_key(key);

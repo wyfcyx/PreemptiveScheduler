@@ -9,8 +9,9 @@
   .global executor_entry
   .balign 4
 executor_entry:
-  popfq
+#  popfq
   pop rdi
+  push 0 # make rsp 16-bytes aligned
   jmp run_executor
 
 
