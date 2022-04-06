@@ -31,8 +31,16 @@ pub(crate) fn pg_base_register() -> usize {
 use riscv::{asm, register::sstatus};
 
 pub(crate) fn wait_for_interrupt() {
-    // interrupt disable?
-    unsafe { asm::wfi() };
+    let enable = sstatus::read().sie();
+    if !enable {
+        unsafe { sstatus::set_sie() };
+    }
+    unsafe {
+        asm::wfi();
+    }
+    if !enable {
+        unsafe { sstatus::clear_sie() };
+    }
 }
 
 pub(crate) fn intr_on() {

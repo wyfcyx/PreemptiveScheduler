@@ -19,12 +19,12 @@ pub(crate) fn cpu_id() -> u8 {
         .initial_local_apic_id() as u8
 }
 
-pub(crate) fn pg_base_addr() -> usize {
-    x86_64::registers::control::Cr3::read()
-        .0
-        .start_address()
-        .as_u64() as _
-}
+// pub(crate) fn pg_base_addr() -> usize {
+//     x86_64::registers::control::Cr3::read()
+//         .0
+//         .start_address()
+//         .as_u64() as _
+// }
 
 pub(crate) fn pg_base_register() -> usize {
     let mut cr3;
@@ -52,6 +52,6 @@ pub(crate) fn intr_off() {
     interrupts::disable();
 }
 
-pub(crate) fn intr_get() -> bool {
-    interrupts::are_enabled()
-}
+// pub(crate) fn intr_get() -> bool {
+//     interrupts::are_enabled()
+// }

@@ -36,7 +36,7 @@ impl ExecutorRuntime {
         let tc_clone = task_collection.clone();
         ExecutorRuntime {
             cpu_id,
-            task_collection: task_collection,
+            task_collection,
             strong_executor: Arc::new(Executor::new(tc_clone)),
             weak_executor_vec: vec![],
             current_executor: None,
@@ -127,7 +127,6 @@ lazy_static! {
 // per-cpu scheduler.
 pub fn run_until_idle() -> bool {
     debug!("GLOBAL_RUNTIME.run()");
-    // crate::intr_off(); // runtime can't be interrupted
     loop {
         let mut runtime = get_current_runtime();
         let runtime_cx = runtime.get_context();
@@ -136,7 +135,6 @@ pub fn run_until_idle() -> bool {
         runtime.current_executor = Some(runtime.strong_executor.clone());
         // 释放保护 global_runtime 的锁
         drop(runtime);
-        // warn!("run strong executor");
         unsafe {
             crate::switch(runtime_cx as _, executor_cx as _);
             // 该函数返回说明当前 strong_executor 执行的 future 超时或者主动 yield 了,
@@ -144,7 +142,6 @@ pub fn run_until_idle() -> bool {
             // 新的 executor 作为 strong_executor，旧的 executor 添
             // 加到 weak_exector 中。
         }
-        // warn!("runtime switch return");
         let mut runtime = get_current_runtime();
         // 只有 strong_executor 主动 yield 时, 才会执行运行 weak_executor;
         if runtime.strong_executor.is_running_future() {
@@ -157,7 +154,6 @@ pub fn run_until_idle() -> bool {
             drop(runtime);
             continue;
         }
-        // error!("run weak executor size={}", runtime.weak_executor_vec.len());
         runtime
             .weak_executor_vec
             .retain(|executor| executor.is_some() && !executor.as_ref().unwrap().killed());
@@ -170,9 +166,7 @@ pub fn run_until_idle() -> bool {
                 let executor_ctx = executor.context.get_context();
                 runtime.current_executor = Some(executor);
                 drop(runtime);
-                error!("into weak executor");
                 switch(runtime_cx as _, executor_ctx as _);
-                error!("weak executor return");
                 runtime = get_current_runtime();
             }
         }
@@ -183,9 +177,7 @@ pub fn run_until_idle() -> bool {
 }
 
 pub fn spawn(future: impl Future<Output = ()> + Send + 'static) {
-    // trace!("spawn coroutine");
     spawn_task(future, None, Some(crate::cpu_id() as _));
-    // trace!("spawn coroutine over");
 }
 
 /// Spawn a coroutine with `priority` and `cpu_id`
@@ -213,17 +205,7 @@ pub fn spawn_task(
 /// coroutines.
 pub fn handle_timeout() {
     debug!("handle timeout");
-    // let runtime = get_current_runtime();
-    // if runtime
-    //     .current_executor
-    //     .as_ref()
-    //     .unwrap()
-    //     .is_running_future()
-    // {
-    //     drop(runtime);
-    //     sched_yield();
-    //     debug!("handle timeout return");
-    // }
+    sched_yield()
 }
 
 /// 运行executor.run()
