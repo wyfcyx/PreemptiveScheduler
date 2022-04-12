@@ -146,7 +146,6 @@ impl TaskCollection {
 
     /// remove the task correponding to the key.
     pub fn remove_task(&self, key: Key) {
-        debug!("remove task key = 0x{:x?}", key);
         let mut inner = self.get_mut_inner(key >> PRIORITY_SHIFT);
         inner.remove(unmask_priority(key), true);
         self.task_num.fetch_sub(1, Ordering::Relaxed);
@@ -217,6 +216,7 @@ impl TaskCollection {
                             for subpage_idx in BitIter::from(dropped) {
                                 // the key corresponding to the task
                                 let key = pack_key(priority, page_idx, subpage_idx);
+                                self.task_num.fetch_sub(1, Ordering::Relaxed);
                                 inner.remove(key, true);
                             }
                         }
@@ -241,7 +241,6 @@ pub mod key {
     pub const DEFAULT_PRIORITY: usize = 4;
 
     pub const PAGE_INDEX_SHIFT: usize = 6;
-    pub const TASK_NUM_PER_PAGE: usize = 1 << PAGE_INDEX_SHIFT;
 
     pub fn unpack_key(key: Key) -> (usize, usize, usize) {
         let subpage_idx = key & 0x3F;

@@ -8,7 +8,7 @@ use {
     core::task::{Context, Poll},
 };
 
-use crate::executor_entry;
+use crate::arch::executor_entry;
 use crate::task_collection::TaskCollection;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -78,7 +78,7 @@ impl Executor {
         let context_data = ContextData::new(
             executor_entry as *const () as usize,
             stack_top,
-            crate::pg_base_register(),
+            crate::arch::pg_base_register(),
         );
         stack_top = unsafe { push_stack(stack_top, context_data) };
         stack_top
@@ -107,13 +107,18 @@ impl Executor {
 
                 match ret {
                     Poll::Ready(()) => {
-                        // self.task_collection.remove_task(key);
                         droper.drop_by_ref();
                     }
                     Poll::Pending => (),
                 }
             } else {
-                let runtime = crate::runtime::get_current_runtime();
+                let mut runtime = crate::runtime::get_current_runtime();
+                if runtime.task_num() == 0 {
+                    trace!("all done! return to runtime");
+                    drop(runtime);
+                    crate::runtime::sched_yield();
+                    runtime = crate::runtime::get_current_runtime();
+                }
                 let has_other_task = runtime.weak_executor_num() != 0;
                 drop(runtime);
                 if has_other_task {

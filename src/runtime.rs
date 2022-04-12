@@ -21,7 +21,7 @@ pub struct ExecutorRuntime {
     strong_executor: Arc<Pin<Box<Executor>>>,
 
     // 该 executor 在执行完一次后就会被 drop
-    weak_executor_vec: Vec<Option<Arc<Pin<Box<Executor>>>>>,
+    weak_executors: Vec<Option<Arc<Pin<Box<Executor>>>>>,
 
     // 当前正在执行的 executor
     current_executor: Option<Arc<Pin<Box<Executor>>>>,
@@ -38,7 +38,7 @@ impl ExecutorRuntime {
             cpu_id,
             task_collection,
             strong_executor: Arc::new(Executor::new(tc_clone)),
-            weak_executor_vec: vec![],
+            weak_executors: vec![],
             current_executor: None,
             context: Context::default(),
         }
@@ -49,11 +49,16 @@ impl ExecutorRuntime {
     }
 
     pub(crate) fn weak_executor_num(&self) -> usize {
-        self.weak_executor_vec.len()
+        self.weak_executors.len()
+    }
+
+    // return task number of current cpu.
+    pub fn task_num(&self) -> usize {
+        self.task_collection.task_num()
     }
 
     fn add_weak_executor(&mut self, weak_executor: Arc<Pin<Box<Executor>>>) {
-        self.weak_executor_vec.push(Some(weak_executor));
+        self.weak_executors.push(Some(weak_executor));
     }
 
     fn downgrade_strong_executor(&mut self) {
@@ -64,11 +69,6 @@ impl ExecutorRuntime {
         }
         self.add_weak_executor(old);
         self.strong_executor = Arc::new(Executor::new(self.task_collection.clone()));
-    }
-
-    // return task number of current cpu.
-    fn task_num(&self) -> usize {
-        self.task_collection.task_num()
     }
 
     // 添加一个task，它的初始状态是 notified，也就是说它可以被执行.
@@ -135,14 +135,15 @@ pub fn run_until_idle() -> bool {
         runtime.current_executor = Some(runtime.strong_executor.clone());
         // 释放保护 global_runtime 的锁
         drop(runtime);
-        unsafe {
-            crate::switch(runtime_cx as _, executor_cx as _);
-            // 该函数返回说明当前 strong_executor 执行的 future 超时或者主动 yield 了,
-            // 需要重新创建一个 executor 执行后续的 future, 并且将
-            // 新的 executor 作为 strong_executor，旧的 executor 添
-            // 加到 weak_exector 中。
+        switch(runtime_cx, executor_cx);
+        // 该函数返回说明当前 strong_executor 执行的 future 超时或者主动 yield 了,
+        // 需要重新创建一个 executor 执行后续的 future, 并且将
+        // 新的 executor 作为 strong_executor，旧的 executor 添
+        // 加到 weak_exector 中。
+        runtime = get_current_runtime();
+        if runtime.task_num() == 0 {
+            return false;
         }
-        let mut runtime = get_current_runtime();
         // 只有 strong_executor 主动 yield 时, 才会执行运行 weak_executor;
         if runtime.strong_executor.is_running_future() {
             runtime.downgrade_strong_executor();
@@ -150,15 +151,15 @@ pub fn run_until_idle() -> bool {
         }
 
         // 遍历全部的 weak_executor
-        if runtime.weak_executor_vec.is_empty() {
+        if runtime.weak_executors.is_empty() {
             drop(runtime);
             continue;
         }
         runtime
-            .weak_executor_vec
+            .weak_executors
             .retain(|executor| executor.is_some() && !executor.as_ref().unwrap().killed());
-        for idx in 0..runtime.weak_executor_vec.len() {
-            if let Some(executor) = &runtime.weak_executor_vec[idx] {
+        for idx in 0..runtime.weak_executors.len() {
+            if let Some(executor) = &runtime.weak_executors[idx] {
                 if executor.killed() {
                     continue;
                 }
@@ -177,7 +178,7 @@ pub fn run_until_idle() -> bool {
 }
 
 pub fn spawn(future: impl Future<Output = ()> + Send + 'static) {
-    spawn_task(future, None, Some(crate::cpu_id() as _));
+    spawn_task(future, None, Some(crate::arch::cpu_id() as _));
 }
 
 /// Spawn a coroutine with `priority` and `cpu_id`
@@ -230,9 +231,7 @@ pub fn sched_yield() {
         let executor_cx = executor.context.get_context();
         let runtime_cx = runtime.get_context();
         drop(runtime);
-        trace!("switch to runtime");
-        switch(executor_cx as _, runtime_cx as _);
-        trace!("switch back to executor");
+        switch(executor_cx, runtime_cx);
     }
 }
 
@@ -242,7 +241,7 @@ pub(crate) fn switch(from_ctx: usize, to_ctx: usize) {
     //     crate::intr_off();
     // }
     unsafe {
-        crate::switch(from_ctx as _, to_ctx as _);
+        crate::arch::switch(from_ctx as _, to_ctx as _);
     }
     // if intr_enable {
     //     crate::intr_on();
@@ -251,5 +250,5 @@ pub(crate) fn switch(from_ctx: usize, to_ctx: usize) {
 
 /// return runtime `MutexGuard` of current cpu.
 pub(crate) fn get_current_runtime() -> MutexGuard<'static, ExecutorRuntime> {
-    GLOBAL_RUNTIME[crate::cpu_id() as usize].lock()
+    GLOBAL_RUNTIME[crate::arch::cpu_id() as usize].lock()
 }

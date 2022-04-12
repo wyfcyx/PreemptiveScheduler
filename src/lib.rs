@@ -17,8 +17,6 @@ cfg_if::cfg_if! {
   }
 }
 
-use arch::*;
-
 extern crate alloc;
 #[macro_use]
 extern crate log;
@@ -29,5 +27,4 @@ mod runtime;
 mod task_collection;
 mod waker_page;
 
-pub(crate) use context::{Context, ContextData};
 pub use runtime::{handle_timeout, run_until_idle, sched_yield, spawn};
