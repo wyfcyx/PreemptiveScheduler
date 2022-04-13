@@ -225,7 +225,9 @@ pub(crate) fn run_executor(executor_addr: usize) {
 
 /// switch to runtime, which would select an appropriate executor to run.
 pub fn sched_yield() {
-    crate::arch::intr_off();
+    if crate::arch::intr_get() {
+        error!("intrrupt should be disabled when sched_yield");
+    }
     let runtime = get_current_runtime();
     if let Some(executor) = runtime.current_executor.as_ref() {
         let executor_cx = executor.context.get_context();
@@ -236,16 +238,9 @@ pub fn sched_yield() {
 }
 
 pub(crate) fn switch(from_ctx: usize, to_ctx: usize) {
-    // let intr_enable = crate::intr_get();
-    // if intr_enable {
-    //     crate::intr_off();
-    // }
     unsafe {
         crate::arch::switch(from_ctx as _, to_ctx as _);
     }
-    // if intr_enable {
-    //     crate::intr_on();
-    // }
 }
 
 /// return runtime `MutexGuard` of current cpu.

@@ -52,6 +52,6 @@ pub(crate) fn intr_off() {
     interrupts::disable();
 }
 
-// pub(crate) fn intr_get() -> bool {
-//     interrupts::are_enabled()
-// }
+pub(crate) fn intr_get() -> bool {
+    interrupts::are_enabled()
+}

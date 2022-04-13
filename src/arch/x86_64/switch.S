@@ -4,7 +4,7 @@
 # 
 # Save current registers in old. Load from new.	
 
-    .section .text
+    .text
     .globl switch
     .balign 4
 switch:
