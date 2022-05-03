@@ -135,6 +135,7 @@ pub fn run_until_idle() -> bool {
         runtime.current_executor = Some(runtime.strong_executor.clone());
         // 释放保护 global_runtime 的锁
         drop(runtime);
+        debug!("run strong executor");
         switch(runtime_cx, executor_cx);
         // 该函数返回说明当前 strong_executor 执行的 future 超时或者主动 yield 了,
         // 需要重新创建一个 executor 执行后续的 future, 并且将
@@ -146,15 +147,16 @@ pub fn run_until_idle() -> bool {
         }
         // 只有 strong_executor 主动 yield 时, 才会执行运行 weak_executor;
         if runtime.strong_executor.is_running_future() {
+            debug!("downgrage strong executor");
             runtime.downgrade_strong_executor();
             continue;
         }
-
         // 遍历全部的 weak_executor
         if runtime.weak_executors.is_empty() {
             drop(runtime);
             continue;
         }
+        debug!("run weak executor");
         runtime
             .weak_executors
             .retain(|executor| executor.is_some() && !executor.as_ref().unwrap().killed());
@@ -189,6 +191,7 @@ pub fn spawn_task(
     priority: Option<usize>,
     cpu_id: Option<usize>,
 ) {
+    debug!("try to spawn {:?} {:?}", priority, cpu_id);
     let priority = priority.unwrap_or(DEFAULT_PRIORITY);
     let runtime = if let Some(cpu_id) = cpu_id {
         &GLOBAL_RUNTIME[cpu_id]
@@ -219,6 +222,7 @@ pub(crate) fn run_executor(executor_addr: usize) {
     let executor_cx = p.context.get_context();
     let runtime_cx = runtime.get_context();
     drop(runtime);
+    debug!("executor all done! return to runtime");
     switch(executor_cx as _, runtime_cx as _);
     unreachable!();
 }

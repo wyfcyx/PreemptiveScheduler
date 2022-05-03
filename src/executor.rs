@@ -95,34 +95,31 @@ impl Executor {
                 let waker = woke::waker_ref(&waker);
                 let mut cx = Context::from_waker(&waker);
                 self.is_running_future = true;
+                info!("is running future = true");
                 crate::arch::intr_on();
                 let ret = task.poll(&mut cx);
                 crate::arch::intr_off();
+                info!("is running future = false");
                 self.is_running_future = false;
-
-                if let ExecutorState::WEAK = self.state {
-                    self.state = ExecutorState::KILLED;
-                    return;
-                }
-
                 match ret {
                     Poll::Ready(()) => {
                         droper.drop_by_ref();
                     }
-                    Poll::Pending => (),
+                    Poll::Pending => {
+                        // Do Nothing
+                    }
+                };
+                if let ExecutorState::WEAK = self.state {
+                    self.state = ExecutorState::KILLED;
+                    return;
                 }
             } else {
-                let mut runtime = crate::runtime::get_current_runtime();
-                if runtime.task_num() == 0 {
-                    trace!("all done! return to runtime");
-                    drop(runtime);
-                    crate::runtime::sched_yield();
-                    runtime = crate::runtime::get_current_runtime();
-                }
-                let has_other_task = runtime.weak_executor_num() != 0;
+                let runtime = crate::runtime::get_current_runtime();
+                let task_num = runtime.task_num();
+                let weak_executor = runtime.weak_executor_num();
                 drop(runtime);
-                if has_other_task {
-                    trace!("no future to run, need yield");
+                if task_num == 0 || weak_executor != 0 {
+                    trace!("all done! return to runtime");
                     crate::runtime::sched_yield();
                 } else {
                     trace!("no other tasks, wait for interrupt");
