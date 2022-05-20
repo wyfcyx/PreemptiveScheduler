@@ -57,32 +57,6 @@ impl AtomicU64SC {
     }
 }
 
-// pub struct SharedWaker(Arc<Waker>);
-
-// impl Clone for SharedWaker {
-//     fn clone(&self) -> Self {
-//         Self(self.0.clone())
-//     }
-// }
-
-// impl Default for SharedWaker {
-//     fn default() -> Self {
-//         Self::new()
-//     }
-// }
-
-// impl SharedWaker {
-//     #[allow(unused)]
-//     pub fn new() -> Self {
-//         Self(Arc::new(AtomicWaker::new()))
-//     }
-
-//     #[allow(unused)]
-//     pub fn wake(&self) {
-//         self.0.wake();
-//     }
-// }
-
 /// A page is used by the scheduler to hold the current status of 64 different futures in the
 /// scheduler. So we use 64bit integers where the ith bit represents the ith future. Pages are
 /// arranged by the scheduler in a `pages` vector of pages which grows as needed allocating space
@@ -183,32 +157,11 @@ impl WakerRef {
         }
     }
 
-    // pub fn wake(self) {
-    //     self.wake_by_ref();
-    // }
-
     pub fn drop_by_ref(&self) {
         if !self.dropped.swap(true, Ordering::SeqCst) {
             self.page.mark_dropped(self.idx);
         }
     }
-
-    // pub fn into_raw(self) -> RawWaker {
-    //     let WakerRef { page, idx } = self;
-    //     let ptr = Arc::into_raw(page);
-    //     assert!((ptr as usize % 64) == 0 && idx < 64);
-    //     RawWaker::new((ptr as usize + idx) as _, &raw_waker::VTABLE)
-    // }
-
-    // pub fn form_raw(data: *const ()) -> Self {
-    //     let idx = data as usize & 0x3F;
-    //     let ptr = data as usize & !(0x3F);
-    //     WakerRef {
-    //         page: unsafe { Arc::from_raw(ptr as _) },
-    //         idx,
-    //         dropped: Arc::new(AtomicBool::new(false)),
-    //     }
-    // }
 }
 
 impl Woke for WakerRef {
@@ -226,37 +179,3 @@ impl Clone for WakerRef {
         }
     }
 }
-
-// mod raw_waker {
-//     use super::*;
-
-//     fn waker_ref_clone(data: *const ()) -> RawWaker {
-//         let waker = WakerRef::form_raw(data);
-//         let cw = waker.clone();
-//         core::mem::forget(waker);
-//         cw.into_raw()
-//     }
-
-//     fn waker_ref_wake(data: *const ()) {
-//         let waker = WakerRef::form_raw(data);
-//         waker.wake();
-//     }
-
-//     fn waker_ref_wake_by_ref(data: *const ()) {
-//         let waker = WakerRef::form_raw(data);
-//         waker.wake_by_ref();
-//         core::mem::forget(waker);
-//     }
-
-//     fn waker_ref_drop(data: *const ()) {
-//         let waker = WakerRef::form_raw(data);
-//         drop(waker)
-//     }
-
-//     pub(super) const VTABLE: RawWakerVTable = RawWakerVTable::new(
-//         waker_ref_clone,
-//         waker_ref_wake,
-//         waker_ref_wake_by_ref,
-//         waker_ref_drop,
-//     );
-// }

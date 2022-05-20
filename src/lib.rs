@@ -10,9 +10,11 @@
 cfg_if::cfg_if! {
   if #[cfg(target_arch = "x86_64")] {
       #[path = "arch/x86_64/mod.rs"]
+      #[macro_use]
       mod arch;
   } else if #[cfg(target_arch = "riscv64")] {
       #[path = "arch/riscv64/mod.rs"]
+      #[macro_use]
       mod arch;
   }
 }
@@ -28,3 +30,31 @@ mod task_collection;
 mod waker_page;
 
 pub use runtime::{handle_timeout, run_until_idle, sched_yield, spawn};
+
+#[macro_export]
+macro_rules! run_with_intr_saved_on {
+    ($($statements:stmt)*) => {
+        let enable = crate::arch::intr_get();
+        if !enable {
+          crate::arch::intr_on();
+        }
+        $($statements)*
+        if !enable {
+          crate::arch::intr_off();
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! run_with_intr_saved_off {
+    ($($statements:stmt)*) => {
+        let enable = crate::arch::intr_get();
+        if enable {
+            crate::arch::intr_off();
+        }
+        $($statements)*
+        if enable {
+            crate::arch::intr_on();
+        }
+    };
+}

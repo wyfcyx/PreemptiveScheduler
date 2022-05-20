@@ -20,15 +20,24 @@ enum ExecutorState {
 }
 
 pub struct Executor {
+    id: usize,
     task_collection: Arc<TaskCollection>,
     stack_base: usize,
     pub context: ExecuterContext,
-    is_running_future: bool,
+    #[cfg(target_arch = "riscv64")]
+    context_data: ContextData,
+    task_id: usize,
     state: ExecutorState,
 }
 
 const STACK_SIZE: usize = 4096 * 32;
 const STACK_LAYOUT: Layout = Layout::new::<[u8; STACK_SIZE]>();
+
+fn executor_alloc_id() -> usize {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static EXECUTOR_ID: AtomicUsize = AtomicUsize::new(1);
+    EXECUTOR_ID.fetch_add(1, Ordering::SeqCst)
+}
 
 impl Executor {
     pub fn new(task_collection: Arc<TaskCollection>) -> Pin<Box<Self>> {
@@ -38,15 +47,17 @@ impl Executor {
             .cast();
         let stack_base = stack.as_ptr() as usize;
         let mut pin_executor = Pin::new(Box::new(Executor {
+            id: executor_alloc_id(),
             task_collection,
             stack_base,
             context: ExecuterContext::default(),
-            is_running_future: false,
+            #[cfg(target_arch = "riscv64")]
+            context_data: ContextData::default(),
+            task_id: 0,
             state: ExecutorState::UNUSED,
         }));
 
-        let sp = pin_executor.init_stack();
-        pin_executor.context.set_context(sp);
+        pin_executor.init_stack_and_context();
 
         trace!(
             "stack top 0x{:x} executor addr 0x{:x}, pgbr = 0x{:x}",
@@ -58,30 +69,30 @@ impl Executor {
     }
 
     // stack layout: [executor_addr | context ]
-    fn init_stack(&mut self) -> usize {
+    fn init_stack_and_context(&mut self) {
         let mut stack_top = self.stack_base + STACK_SIZE;
         let self_addr = self as *const Self as usize;
         stack_top = unsafe { push_stack(stack_top, self_addr) };
         #[cfg(target_arch = "riscv64")]
         {
-            const SUM: usize = 1 << 18;
-            // const SIE: usize = 1 << 1;
-            let sstatus: usize = SUM;
-            stack_top = unsafe { push_stack(stack_top, sstatus) };
+            self.context_data = ContextData::new(
+                executor_entry as *const () as usize,
+                stack_top,
+                crate::arch::pg_base_register(),
+            );
+            self.context
+                .set_context(&self.context_data as *const _ as usize);
         }
-        // #[cfg(target_arch = "x86_64")]
-        // {
-        //     // const IF: usize = 1 << 9;
-        //     let rflags: usize = 0;
-        //     stack_top = unsafe { push_stack(stack_top, rflags) };
-        // }
-        let context_data = ContextData::new(
-            executor_entry as *const () as usize,
-            stack_top,
-            crate::arch::pg_base_register(),
-        );
-        stack_top = unsafe { push_stack(stack_top, context_data) };
-        stack_top
+        #[cfg(target_arch = "x86_64")]
+        {
+            let context_data = ContextData::new(
+                executor_entry as *const () as usize,
+                stack_top,
+                crate::arch::pg_base_register(),
+            );
+            stack_top = unsafe { push_stack(stack_top, context_data) };
+            self.context.set_context(stack_top);
+        }
     }
 
     pub fn run(&mut self) {
@@ -94,15 +105,14 @@ impl Executor {
                 let waker = Arc::new(waker_ref);
                 let waker = woke::waker_ref(&waker);
                 let mut cx = Context::from_waker(&waker);
-                self.is_running_future = true;
-                info!("is running future = true");
-                crate::arch::intr_on();
+                self.task_id = task.id();
+                debug!("running future {}:{}", self.id(), task.id());
                 let ret = task.poll(&mut cx);
-                crate::arch::intr_off();
-                info!("is running future = false");
-                self.is_running_future = false;
+                self.task_id = 0;
+                debug!("back from future {}:{}", self.id(), task.id());
                 match ret {
                     Poll::Ready(()) => {
+                        debug!("task over id = {}", task.id());
                         droper.drop_by_ref();
                     }
                     Poll::Pending => {
@@ -119,11 +129,12 @@ impl Executor {
                 let weak_executor = runtime.weak_executor_num();
                 drop(runtime);
                 if task_num == 0 || weak_executor != 0 {
-                    trace!("all done! return to runtime");
+                    debug!("all done! return to runtime");
                     crate::runtime::sched_yield();
                 } else {
-                    trace!("no other tasks, wait for interrupt");
+                    debug!("no other tasks, wait for interrupt");
                     crate::arch::wait_for_interrupt();
+                    debug!("wait for intrrupt over");
                 }
             }
         }
@@ -133,7 +144,7 @@ impl Executor {
     // 发生supervisor时钟中断时, 若executor在运行future, 则
     // 说明该future超时, 需要切换到另一个executor来执行其他future.
     pub fn is_running_future(&self) -> bool {
-        self.is_running_future
+        self.task_id != 0
     }
 
     pub fn killed(&self) -> bool {
@@ -142,6 +153,14 @@ impl Executor {
 
     pub fn mark_weak(&mut self) {
         self.state = ExecutorState::WEAK;
+    }
+
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
+    pub fn task_id(&self) -> usize {
+        self.task_id
     }
 }
 

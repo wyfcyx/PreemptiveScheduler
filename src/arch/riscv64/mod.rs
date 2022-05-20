@@ -30,6 +30,7 @@ pub(crate) fn pg_base_register() -> usize {
 
 use riscv::{asm, register::sstatus};
 
+// FIXME: somethings may goes wrong if an interrupt happened between sstatus::set_sie() and asm::wfi()
 pub(crate) fn wait_for_interrupt() {
     let enable = sstatus::read().sie();
     if !enable {

@@ -27,6 +27,7 @@ pub enum TaskState {
 }
 
 pub struct Task {
+    id: usize,
     future: Mutex<Pin<Box<dyn Future<Output = ()> + Send>>>,
     inner: Mutex<TaskInner>,
     finish: Arc<AtomicBool>,
@@ -35,6 +36,7 @@ pub struct Task {
 struct TaskInner {
     priority: usize,
     state: TaskState,
+    intr_enable: bool,
 }
 
 impl core::fmt::Debug for Task {
@@ -43,31 +45,48 @@ impl core::fmt::Debug for Task {
         let mut f = f.debug_struct("X86PTE");
         f.field("priority", &inner.priority);
         f.field("state", &inner.state);
+        f.field("intr_enable", &inner.intr_enable);
         f.finish()
     }
+}
+
+fn alloc_id() -> usize {
+    static TASK_ID: AtomicUsize = AtomicUsize::new(1);
+    TASK_ID.fetch_add(1, Ordering::SeqCst)
 }
 
 impl Task {
     pub fn new(future: impl Future<Output = ()> + Send + 'static, priority: usize) -> Self {
         Self {
+            id: alloc_id(),
             future: Mutex::new(Box::pin(future)),
             inner: Mutex::new(TaskInner {
                 priority,
                 state: TaskState::RUNNABLE,
+                intr_enable: false,
             }),
             finish: Arc::new(AtomicBool::new(false)),
         }
     }
     pub fn poll(&self, cx: &mut Context) -> Poll<()> {
         let mut f = self.future.lock();
-        f.as_mut().poll(cx)
+        if self.inner.lock().intr_enable {
+            crate::arch::intr_on();
+        }
+        let ret = f.as_mut().poll(cx);
+        self.inner.lock().intr_enable = crate::arch::intr_get();
+        crate::arch::intr_off();
+        ret
+    }
+
+    pub fn id(&self) -> usize {
+        self.id
     }
 }
 
 pub struct FutureCollection {
     pub slab: PinSlab<Arc<Task>>,
     // pub vec: VecDeque<Key>,
-    // root_waker: SharedWaker,
     pub pages: Vec<Arc<WakerPage>>,
     pub priority: usize,
 }
