@@ -1,6 +1,6 @@
 use crate::{executor::Executor, task_collection::*, waker_page::DroperRef};
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::context::Context;
 #[cfg(target_arch = "riscv64")]
 use crate::context::ContextData as Context;
