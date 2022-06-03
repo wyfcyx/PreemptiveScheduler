@@ -9,7 +9,7 @@
 	.globl executor_entry
 	.balign 4
 executor_entry:
-	ldr a0, [sp], #16
+	ldr x0, [sp], #16
 	b run_executor
 
 

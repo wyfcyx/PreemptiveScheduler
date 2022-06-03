@@ -90,6 +90,11 @@ impl ExecutorRuntime {
     fn get_context(&self) -> usize {
         self.context.get_context()
     }
+
+    #[cfg(target_arch = "aarch64")]
+    fn get_context(&self) -> usize {
+        self.context.get_context()
+    }
 }
 
 impl Drop for ExecutorRuntime {

@@ -61,4 +61,26 @@ impl Context {
         let context_data = self.get_context_data();
         context_data.satp
     }
+
+    #[cfg(target_arch = "aarch64")]
+    pub fn get_context(&self) -> usize {
+        self.context
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    pub fn get_sp(&self) -> usize {
+        self.context
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    pub fn get_pc(&self) -> usize {
+        let context_data = self.get_context_data();
+        context_data.lr
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    pub fn get_pgbr(&self) -> usize {
+        let context_data = self.get_context_data();
+        context_data.ttbr0
+    }
 }

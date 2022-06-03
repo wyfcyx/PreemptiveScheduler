@@ -1,4 +1,4 @@
-use core::arch::{asm, global_asm};
+use core::arch::global_asm;
 use cortex_a::registers::*;
 use tock_registers::interfaces::Readable;
 
@@ -29,13 +29,11 @@ pub(crate) fn pg_base_register() -> usize {
 pub(crate) fn wait_for_interrupt() {
     let enable = intr_get();
     if !enable {
-        unsafe { intr_on() };
+        intr_on();
     }
-    unsafe {
-        cortex_a::asm::wfi();
-    }
+    cortex_a::asm::wfi();
     if !enable {
-        unsafe { intr_off() };
+        intr_off();
     }
 }
 

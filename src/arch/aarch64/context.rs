@@ -1,6 +1,6 @@
 #[derive(Debug, Default, Clone, Copy)]
 #[repr(C)]
-pub struct Context {
+pub struct ContextData {
     // pc / sp
     pub lr: usize,
     pub sp: usize,
@@ -10,13 +10,13 @@ pub struct Context {
     pub ttbr0: usize,
 }
 
-impl Context {
+impl ContextData {
     pub fn new(lr: usize, sp: usize, ttbr0: usize) -> Self {
         Self {
             lr,
             sp,
             ttbr0,
-            ..Context::default()
+            ..ContextData::default()
         }
     }
 }
