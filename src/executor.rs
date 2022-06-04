@@ -24,7 +24,7 @@ pub struct Executor {
     task_collection: Arc<TaskCollection>,
     stack_base: usize,
     pub context: ExecuterContext,
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(any(target_arch = "riscv64", target_arch = "aarch64"))]
     context_data: ContextData,
     task_id: usize,
     state: ExecutorState,
@@ -51,7 +51,7 @@ impl Executor {
             task_collection,
             stack_base,
             context: ExecuterContext::default(),
-            #[cfg(target_arch = "riscv64")]
+            #[cfg(any(target_arch = "riscv64", target_arch = "aarch64"))]
             context_data: ContextData::default(),
             task_id: 0,
             state: ExecutorState::UNUSED,
@@ -73,7 +73,7 @@ impl Executor {
         let mut stack_top = self.stack_base + STACK_SIZE;
         let self_addr = self as *const Self as usize;
         stack_top = unsafe { push_stack(stack_top, self_addr) };
-        #[cfg(target_arch = "riscv64")]
+        #[cfg(any(target_arch = "riscv64", target_arch = "aarch64"))]
         {
             self.context_data = ContextData::new(
                 executor_entry as *const () as usize,
