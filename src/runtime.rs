@@ -6,7 +6,7 @@ use crate::{
 
 #[cfg(target_arch = "x86_64")]
 use crate::context::Context;
-#[cfg(target_arch = "riscv64")]
+#[cfg(any(target_arch = "riscv64", target_arch = "aarch64"))]
 use crate::context::ContextData as Context;
 
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
@@ -94,6 +94,11 @@ impl ExecutorRuntime {
     fn get_context(&self) -> usize {
         self.context.get_context()
     }
+
+    #[cfg(target_arch = "aarch64")]
+    fn get_context(&self) -> usize {
+        &self.context as *const Context as usize
+    }
 }
 
 impl Drop for ExecutorRuntime {
@@ -108,11 +113,12 @@ unsafe impl Sync for ExecutorRuntime {}
 
 // TODO: more elegent?
 lazy_static! {
-    pub static ref GLOBAL_RUNTIME: [Mutex<ExecutorRuntime>; 4] = [
+    pub static ref GLOBAL_RUNTIME: [Mutex<ExecutorRuntime>; 5] = [
         Mutex::new(ExecutorRuntime::new(0)),
         Mutex::new(ExecutorRuntime::new(1)),
         Mutex::new(ExecutorRuntime::new(2)),
-        Mutex::new(ExecutorRuntime::new(3))
+        Mutex::new(ExecutorRuntime::new(3)),
+        Mutex::new(ExecutorRuntime::new(4))
     ];
 }
 

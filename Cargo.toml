@@ -26,3 +26,9 @@ x86_64 = "0.14.8"
 # Bare-metal mode on riscv64
 [target.'cfg(target_arch = "riscv64")'.dependencies]
 riscv = "0.8"
+
+
+# Bare-metal mode on aarch64
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+tock-registers = "0.7"
+cortex-a = "7.2.0"

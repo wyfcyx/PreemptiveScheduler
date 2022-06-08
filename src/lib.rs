@@ -16,6 +16,10 @@ cfg_if::cfg_if! {
       #[path = "arch/riscv64/mod.rs"]
       #[macro_use]
       mod arch;
+  } else if #[cfg(target_arch = "aarch64")] {
+      #[path = "arch/aarch64/mod.rs"]
+      #[macro_use]
+      mod arch;
   }
 }
 
