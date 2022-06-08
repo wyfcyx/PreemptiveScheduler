@@ -97,9 +97,9 @@ impl Executor {
 
     pub fn run(&mut self) {
         loop {
-            let task_info = self.task_collection.take_task();
+            let mut task_info = self.task_collection.take_task();
             // if task_info.is_none() {
-            //     task_info = crate::runtime::steal_task_from_other_cpu()
+            //     task_info = crate::runtime::steal_task_from_other_cpu();
             // }
             if let Some((_key, task, waker_ref, droper)) = task_info {
                 let waker = Arc::new(waker_ref);
@@ -128,13 +128,16 @@ impl Executor {
                 let task_num = runtime.task_num();
                 let weak_executor = runtime.weak_executor_num();
                 drop(runtime);
-                if task_num == 0 || weak_executor != 0 {
-                    debug!("all done! return to runtime");
+                // TODO: some cores may exit by mistake when we have multi-cores
+                if cfg!(feature = "baremetal-test") && task_num == 0 {
+                    debug!("all done! exit and reboot");
+                    crate::runtime::sched_yield();
+                } else if weak_executor != 0 {
+                    debug!("return to runtime and run weak executor");
                     crate::runtime::sched_yield();
                 } else {
                     debug!("no other tasks, wait for interrupt");
                     crate::arch::wait_for_interrupt();
-                    debug!("wait for intrrupt over");
                 }
             }
         }

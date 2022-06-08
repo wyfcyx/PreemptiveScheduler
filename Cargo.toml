@@ -5,8 +5,9 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
-debug_refcell = []
-track_caller = []
+# For bare-metal testing, if kernel panic or the root process is finished,
+# shutdown the machine and exit QEMU.
+baremetal-test = []
 
 [dependencies]
 lazy_static = { version = "1.4", features = ["spin_no_std"] }

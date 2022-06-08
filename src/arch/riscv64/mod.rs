@@ -30,7 +30,7 @@ pub(crate) fn pg_base_register() -> usize {
 
 use riscv::{asm, register::sstatus};
 
-// FIXME: somethings may goes wrong if an interrupt happened between sstatus::set_sie() and asm::wfi()
+// FIXME: somethings may go wrong if an interrupt happened between sstatus::set_sie() and asm::wfi()
 pub(crate) fn wait_for_interrupt() {
     let enable = sstatus::read().sie();
     if !enable {
@@ -55,3 +55,7 @@ pub(crate) fn intr_off() {
 pub(crate) fn intr_get() -> bool {
     sstatus::read().sie()
 }
+
+// pub(crate) fn is_handling_intr() -> bool {
+//     sstatus::read().spp() == sstatus::SPP::Supervisor
+// }

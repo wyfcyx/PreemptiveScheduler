@@ -1,4 +1,8 @@
-use crate::{executor::Executor, task_collection::*, waker_page::DroperRef};
+use crate::{
+    executor::Executor,
+    task_collection::*,
+    waker_page::{DroperRef, WakerRef},
+};
 
 #[cfg(target_arch = "x86_64")]
 use crate::context::Context;
@@ -113,15 +117,17 @@ lazy_static! {
 }
 
 // // obtain a task from other cpu.
-// pub(crate) fn steal_task_from_other_cpu() -> Option<(Arc<Task>, Waker, DroperRef)> {
+// pub(crate) fn steal_task_from_other_cpu() -> Option<(Key, Arc<Task>, WakerRef, DroperRef)> {
 //     let runtime = GLOBAL_RUNTIME
 //         .iter()
 //         .max_by_key(|runtime| runtime.lock().task_num())
 //         .unwrap();
 //     let runtime = runtime.lock();
-//     debug!("most_task_cpu_id:{}", runtime.cpu_id());
-//     // TODO: ???, SAGETY?
-//     runtime.task_collection.take_task()
+//     if runtime.task_num() > 0 {
+//         runtime.task_collection.take_task()
+//     } else {
+//         None
+//     }
 // }
 
 // per-cpu scheduler.
@@ -142,12 +148,12 @@ pub fn run_until_idle() -> bool {
         // 新的 executor 作为 strong_executor，旧的 executor 添
         // 加到 weak_exector 中。
         runtime = get_current_runtime();
-        if runtime.task_num() == 0 {
+        runtime.current_executor = None;
+        if cfg!(feature = "baremetal-test") && runtime.task_num() == 0 {
             return false;
         }
         // 只有 strong_executor 主动 yield 时, 才会执行运行 weak_executor;
         if runtime.strong_executor.is_running_future() {
-            debug!("downgrage strong executor");
             runtime.downgrade_strong_executor();
             continue;
         }
@@ -172,10 +178,8 @@ pub fn run_until_idle() -> bool {
                 drop(runtime);
                 switch(runtime_cx as _, executor_ctx as _);
                 runtime = get_current_runtime();
+                runtime.current_executor = None;
             }
-        }
-        if runtime.task_num() == 0 {
-            return false;
         }
     }
 }
@@ -211,11 +215,9 @@ pub fn spawn_task(
 /// switch to currrent cpu runtime that would create a new executor to run other
 /// coroutines.
 pub fn handle_timeout() {
-    // debug!("handle timeout {:?}", get_current_executor_id());
     super::run_with_intr_saved_off! {
         sched_yield()
     }
-    // debug!("handle timeout over {:?}", get_current_executor_id());
 }
 
 /// 运行executor.run()

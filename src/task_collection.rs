@@ -136,7 +136,7 @@ impl FutureCollection {
 
 pub struct TaskCollection {
     future_collections: Vec<RefCell<FutureCollection>>,
-    task_num: AtomicUsize,
+    pub task_num: AtomicUsize,
     generator: Option<Mutex<Pin<Box<dyn Generator<Yield = Option<Key>, Return = ()>>>>>,
 }
 
