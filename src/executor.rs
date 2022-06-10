@@ -98,18 +98,20 @@ impl Executor {
     pub fn run(&mut self) {
         loop {
             let mut task_info = self.task_collection.take_task();
-            // if task_info.is_none() {
-            //     task_info = crate::runtime::steal_task_from_other_cpu();
-            // }
+            if task_info.is_none() {
+                task_info = crate::runtime::steal_task_from_other_cpu();
+            }
             if let Some((_key, task, waker_ref, droper)) = task_info {
-                let waker = Arc::new(waker_ref);
-                let waker = woke::waker_ref(&waker);
+                let waker_ref = Arc::new(waker_ref);
+                let waker = woke::waker_ref(&waker_ref);
                 let mut cx = Context::from_waker(&waker);
+                waker_ref.mark_borrowed(true);
                 self.task_id = task.id();
                 debug!("running future {}:{}", self.id(), task.id());
                 let ret = task.poll(&mut cx);
-                self.task_id = 0;
                 debug!("back from future {}:{}", self.id(), task.id());
+                self.task_id = 0;
+                waker_ref.mark_borrowed(false);
                 match ret {
                     Poll::Ready(()) => {
                         debug!("task over id = {}", task.id());

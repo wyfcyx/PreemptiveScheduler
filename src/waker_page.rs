@@ -70,7 +70,7 @@ pub struct WakerPage {
     notified: AtomicU64SC,
     // completed: AtomicU64SC,
     dropped: AtomicU64SC,
-    // borrowed: AtomicU64SC,
+    borrowed: AtomicU64SC,
 }
 
 impl WakerPage {
@@ -79,7 +79,7 @@ impl WakerPage {
             notified: AtomicU64SC::new(0),
             // completed: AtomicU64SC::new(0),
             dropped: AtomicU64SC::new(0),
-            // borrowed: AtomicU64SC::new(0),
+            borrowed: AtomicU64SC::new(0),
         }
     }
 
@@ -92,6 +92,7 @@ impl WakerPage {
         self.notified.fetch_or(1 << idx);
         // self.completed.fetch_and(!(1 << idx));
         self.dropped.fetch_and(!(1 << idx));
+        self.borrowed.fetch_and(!(1 << idx));
     }
 
     pub fn mark_dropped(&self, idx: usize) {
@@ -109,6 +110,20 @@ impl WakerPage {
         self.notified.fetch_or(1 << offset);
     }
 
+    pub fn mark_borrowed(&self, offset: usize, borrowed: bool) {
+        debug_assert!(offset < 64);
+        if borrowed {
+            self.borrowed.fetch_or(1 << offset);
+        } else {
+            self.borrowed.fetch_and(!(1 << offset));
+        }
+    }
+
+    // pub fn mark_completed(&self, offset: usize) {
+    //     debug_assert!(offset < 64);
+    //     self.completed.fetch_or(1 << offset);
+    // }
+
     /// Return a bit vector representing the futures in this page which are ready to be
     /// polled again.
     pub fn take_notified(&self) -> u64 {
@@ -117,7 +132,7 @@ impl WakerPage {
         let mut notified = self.notified.swap(0);
         // notified &= !self.completed.load();
         notified &= !self.dropped.load();
-        // notified &= !self.borrowed.load();
+        notified &= !self.borrowed.load();
         notified
     }
 
@@ -131,6 +146,7 @@ impl WakerPage {
         self.notified.fetch_and(mask);
         // self.completed.fetch_and(mask);
         self.dropped.fetch_and(mask);
+        self.borrowed.fetch_and(mask)
     }
 
     pub fn make_waker(self: &Arc<Self>, idx: usize, dropped: &Arc<AtomicBool>) -> WakerRef {
@@ -151,6 +167,14 @@ pub struct WakerRef {
 }
 
 impl WakerRef {
+    // pub fn mark_complete(&self) {
+    //     self.page.mark_completed(self.idx);
+    // }
+
+    pub fn mark_borrowed(&self, borrowed: bool) {
+        self.page.mark_borrowed(self.idx, borrowed);
+    }
+
     pub fn wake_by_ref(&self) {
         if !self.dropped.load(Ordering::SeqCst) {
             self.page.notify(self.idx);

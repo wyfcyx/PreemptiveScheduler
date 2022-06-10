@@ -36,7 +36,7 @@ pub struct ExecutorRuntime {
 
 impl ExecutorRuntime {
     pub fn new(cpu_id: u8) -> Self {
-        let task_collection = TaskCollection::new();
+        let task_collection = TaskCollection::new(cpu_id);
         let tc_clone = task_collection.clone();
         ExecutorRuntime {
             cpu_id,
@@ -122,19 +122,19 @@ lazy_static! {
     ];
 }
 
-// // obtain a task from other cpu.
-// pub(crate) fn steal_task_from_other_cpu() -> Option<(Key, Arc<Task>, WakerRef, DroperRef)> {
-//     let runtime = GLOBAL_RUNTIME
-//         .iter()
-//         .max_by_key(|runtime| runtime.lock().task_num())
-//         .unwrap();
-//     let runtime = runtime.lock();
-//     if runtime.task_num() > 0 {
-//         runtime.task_collection.take_task()
-//     } else {
-//         None
-//     }
-// }
+// obtain a task from other cpu.
+pub(crate) fn steal_task_from_other_cpu() -> Option<(Key, Arc<Task>, WakerRef, DroperRef)> {
+    let runtime = GLOBAL_RUNTIME
+        .iter()
+        .max_by_key(|runtime| runtime.lock().task_num())
+        .unwrap();
+    let runtime = runtime.lock();
+    if runtime.task_num() > 0 {
+        runtime.task_collection.take_task()
+    } else {
+        None
+    }
+}
 
 // per-cpu scheduler.
 pub fn run_until_idle() -> bool {
@@ -192,7 +192,7 @@ pub fn run_until_idle() -> bool {
 
 pub fn spawn(future: impl Future<Output = ()> + Send + 'static) {
     super::run_with_intr_saved_off! {
-        spawn_task(future, None, Some(crate::arch::cpu_id() as _))
+        spawn_task(future, None, None/*Some(crate::arch::cpu_id() as _)*/)
     }
 }
 
@@ -221,6 +221,7 @@ pub fn spawn_task(
 /// switch to currrent cpu runtime that would create a new executor to run other
 /// coroutines.
 pub fn handle_timeout() {
+    debug!("handle kernel timeout");
     super::run_with_intr_saved_off! {
         sched_yield()
     }

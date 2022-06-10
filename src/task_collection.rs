@@ -3,14 +3,12 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use bit_iter::BitIter;
-use core::cell::RefCell;
 use core::ops::{Generator, GeneratorState};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use spin::Mutex;
+use spin::{Mutex, MutexGuard};
 use unicycle::pin_slab::PinSlab;
 use {
     alloc::boxed::Box,
-    core::cell::RefMut,
     core::future::Future,
     core::pin::Pin,
     core::task::{Context, Poll},
@@ -69,6 +67,9 @@ impl Task {
         }
     }
     pub fn poll(&self, cx: &mut Context) -> Poll<()> {
+        // if self.finish.load(Ordering::Relaxed) {
+        //     return Poll::Ready(());
+        // }
         let mut f = self.future.lock();
         if self.inner.lock().intr_enable {
             crate::arch::intr_on();
@@ -123,26 +124,24 @@ impl FutureCollection {
         key
     }
 
-    pub fn remove(&mut self, key: Key, _remove_vec: bool) {
+    pub fn remove(&mut self, key: Key) {
         let (page, subpage_idx) = self.page(key);
         page.clear(subpage_idx);
-        self.slab.remove(unmask_priority(key));
-        // Efficiency: remove should be called rarely
-        // if remove_vec {
-        //     // self.vec.retain(|&x| x != key);
-        // }
+        let remove = self.slab.remove(unmask_priority(key));
     }
 }
 
 pub struct TaskCollection {
-    future_collections: Vec<RefCell<FutureCollection>>,
+    cpu_id: u8,
+    future_collections: Vec<Mutex<FutureCollection>>,
     pub task_num: AtomicUsize,
     generator: Option<Mutex<Pin<Box<dyn Generator<Yield = Option<Key>, Return = ()>>>>>,
 }
 
 impl TaskCollection {
-    pub fn new() -> Arc<Self> {
+    pub fn new(cpu_id: u8) -> Arc<Self> {
         let mut task_collection = Arc::new(TaskCollection {
+            cpu_id,
             future_collections: Vec::with_capacity(MAX_PRIORITY),
             task_num: AtomicUsize::new(0),
             generator: None,
@@ -152,7 +151,7 @@ impl TaskCollection {
         let mut tc = unsafe { Arc::get_mut_unchecked(&mut task_collection) };
         for priority in 0..MAX_PRIORITY {
             tc.future_collections
-                .push(RefCell::new(FutureCollection::new(priority)));
+                .push(Mutex::new(FutureCollection::new(priority)));
         }
         tc.generator = Some(Mutex::new(Box::pin(TaskCollection::generator(tc_clone))));
         task_collection
@@ -166,7 +165,7 @@ impl TaskCollection {
     /// remove the task correponding to the key.
     pub fn remove_task(&self, key: Key) {
         let mut inner = self.get_mut_inner(key >> PRIORITY_SHIFT);
-        inner.remove(unmask_priority(key), true);
+        inner.remove(unmask_priority(key));
         self.task_num.fetch_sub(1, Ordering::Relaxed);
     }
 
@@ -176,16 +175,14 @@ impl TaskCollection {
         future: F,
     ) -> Key {
         debug_assert!(priority == DEFAULT_PRIORITY);
-        let key = self.future_collections[priority]
-            .borrow_mut()
-            .insert(future);
+        let key = self.future_collections[priority].lock().insert(future);
         debug_assert!(key < TASK_NUM_PER_PRIORITY);
         self.task_num.fetch_add(1, Ordering::Relaxed);
         key | (priority << PRIORITY_SHIFT)
     }
 
-    fn get_mut_inner(&self, priority: usize) -> RefMut<'_, FutureCollection> {
-        self.future_collections[priority].borrow_mut()
+    fn get_mut_inner(&self, priority: usize) -> MutexGuard<'_, FutureCollection> {
+        self.future_collections[priority].lock()
     }
 
     pub fn task_num(&self) -> usize {
@@ -236,7 +233,7 @@ impl TaskCollection {
                                 // the key corresponding to the task
                                 let key = pack_key(priority, page_idx, subpage_idx);
                                 self.task_num.fetch_sub(1, Ordering::Relaxed);
-                                inner.remove(key, true);
+                                inner.remove(key);
                             }
                         }
                     }
@@ -269,7 +266,7 @@ pub mod key {
     }
 
     pub fn pack_key(priority: usize, page_idx: usize, subpage_idx: usize) -> Key {
-        priority << PRIORITY_SHIFT | page_idx << PAGE_INDEX_SHIFT | subpage_idx
+        (priority << PRIORITY_SHIFT) | (page_idx << PAGE_INDEX_SHIFT) | subpage_idx
     }
 
     pub fn unmask_priority(key: Key) -> usize {
