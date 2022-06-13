@@ -19,7 +19,7 @@ use core::fmt::{Debug, Formatter, Result};
 // #[allow(unused)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskState {
-    BLOCKED,
+    // BLOCKED,
     RUNNABLE,
     RUNNING,
 }
@@ -127,12 +127,12 @@ impl FutureCollection {
     pub fn remove(&mut self, key: Key) {
         let (page, subpage_idx) = self.page(key);
         page.clear(subpage_idx);
-        let remove = self.slab.remove(unmask_priority(key));
+        self.slab.remove(unmask_priority(key));
     }
 }
 
 pub struct TaskCollection {
-    cpu_id: u8,
+    cpu_id: u8, // Just for debug, not used
     future_collections: Vec<Mutex<FutureCollection>>,
     pub task_num: AtomicUsize,
     generator: Option<Mutex<Pin<Box<dyn Generator<Yield = Option<Key>, Return = ()>>>>>,

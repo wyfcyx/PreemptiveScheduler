@@ -16,7 +16,7 @@ impl ContextData {
             s: [0; 11],
             lr,
             sp,
-            ttbr0
+            ttbr0,
         }
     }
 }

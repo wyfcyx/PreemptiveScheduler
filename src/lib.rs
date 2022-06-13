@@ -6,6 +6,8 @@
 #![feature(atomic_mut_ptr)]
 #![feature(box_into_inner)]
 #![feature(new_uninit)]
+// some interfaces is still under developing
+#![allow(dead_code)]
 
 cfg_if::cfg_if! {
   if #[cfg(target_arch = "x86_64")] {

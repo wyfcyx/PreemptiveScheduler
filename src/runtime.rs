@@ -10,7 +10,7 @@ use crate::context::Context;
 use crate::context::ContextData as Context;
 
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
-use core::{future::Future, pin::Pin, task::Waker};
+use core::{future::Future, pin::Pin};
 use lazy_static::*;
 use spin::{Mutex, MutexGuard};
 
@@ -192,7 +192,7 @@ pub fn run_until_idle() -> bool {
 
 pub fn spawn(future: impl Future<Output = ()> + Send + 'static) {
     super::run_with_intr_saved_off! {
-        spawn_task(future, None, None/*Some(crate::arch::cpu_id() as _)*/)
+        spawn_task(future, None, Some(crate::arch::cpu_id() as _))
     }
 }
 
@@ -265,6 +265,8 @@ pub(crate) fn get_current_runtime() -> MutexGuard<'static, ExecutorRuntime> {
     GLOBAL_RUNTIME[crate::arch::cpu_id() as usize].lock()
 }
 
+#[allow(dead_code)]
+// Just for debug
 pub fn get_current_executor_id() -> (usize, usize) {
     let runtime = get_current_runtime();
     if let Some(executor) = runtime.current_executor.as_ref() {
