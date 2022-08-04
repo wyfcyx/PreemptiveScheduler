@@ -13,10 +13,17 @@ extern "C" {
 }
 
 pub(crate) fn cpu_id() -> u8 {
+    /*
     raw_cpuid::CpuId::new()
         .get_feature_info()
         .unwrap()
         .initial_local_apic_id() as u8
+    */
+    let cpu_id: u64;
+    unsafe {
+        asm!("mov {}, gs:28", out(reg) cpu_id);
+    }
+    cpu_id as u8
 }
 
 // pub(crate) fn pg_base_addr() -> usize {
