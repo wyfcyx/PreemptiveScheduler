@@ -47,14 +47,10 @@ pub(crate) fn wait_for_interrupt() {
     // Hack: on x86_64 we only wait for a while. If there were not any interrupts,
     // we just continue the executor's event loop.
     let enable = interrupts::are_enabled();
-    let start = unsafe { core::arch::x86_64::_rdtsc() };
+    let read_timer = || unsafe { core::arch::x86_64::_rdtsc() };
+    let start = read_timer();
     interrupts::enable();
-    loop {
-        let now = unsafe { core::arch::x86_64::_rdtsc() };
-        if now - start > 100000 {
-            break;
-        }
-    }
+    while read_timer() < start + 100 {}
     if !enable {
         interrupts::disable();
     }
