@@ -37,8 +37,24 @@ pub(crate) fn pg_base_register() -> usize {
 use x86_64::instructions::interrupts;
 
 pub(crate) fn wait_for_interrupt() {
+    /*
     let enable = interrupts::are_enabled();
     interrupts::enable_and_hlt();
+    if !enable {
+        interrupts::disable();
+    }
+    */
+    // Hack: on x86_64 we only wait for a while. If there were not any interrupts,
+    // we just continue the executor's event loop.
+    let enable = interrupts::are_enabled();
+    let start = unsafe { core::arch::x86_64::_rdtsc() };
+    interrupts::enable();
+    loop {
+        let now = unsafe { core::arch::x86_64::_rdtsc() };
+        if now - start > 100000 {
+            break;
+        }
+    }
     if !enable {
         interrupts::disable();
     }
