@@ -231,6 +231,7 @@ pub fn spawn_task(
             .values()
             .min_by_key(|runtime| runtime.lock().task_num())
             .unwrap()
+            .clone()
     };
     runtime.lock().add_task(priority, future);
 }
