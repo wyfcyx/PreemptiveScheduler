@@ -12,7 +12,9 @@ use crate::context::ContextData as Context;
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 use core::{future::Future, pin::Pin};
 use lazy_static::*;
-use spin::{Mutex, MutexGuard};
+//use spin::{Mutex, MutexGuard};
+use lock::{Mutex, MutexGuard};
+
 
 pub struct ExecutorRuntime {
     // runtime only run on this cpu

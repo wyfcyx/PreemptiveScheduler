@@ -5,7 +5,8 @@ use alloc::vec::Vec;
 use bit_iter::BitIter;
 use core::ops::{Generator, GeneratorState};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use spin::{Mutex, MutexGuard};
+//use spin::{Mutex, MutexGuard};
+use lock::{Mutex, MutexGuard};
 use unicycle::pin_slab::PinSlab;
 use {
     alloc::boxed::Box,
