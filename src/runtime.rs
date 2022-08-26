@@ -9,7 +9,7 @@ use crate::context::Context;
 #[cfg(any(target_arch = "riscv64", target_arch = "aarch64"))]
 use crate::context::ContextData as Context;
 
-use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
+use alloc::{boxed::Box, sync::Arc, vec, vec::Vec, collections::BTreeMap};
 use core::{future::Future, pin::Pin};
 use lazy_static::*;
 //use spin::{Mutex, MutexGuard};
@@ -115,6 +115,7 @@ unsafe impl Sync for ExecutorRuntime {}
 
 // TODO: more elegent?
 lazy_static! {
+    /*
     pub static ref GLOBAL_RUNTIME: [Mutex<ExecutorRuntime>; 5] = [
         Mutex::new(ExecutorRuntime::new(0)),
         Mutex::new(ExecutorRuntime::new(1)),
@@ -122,8 +123,19 @@ lazy_static! {
         Mutex::new(ExecutorRuntime::new(3)),
         Mutex::new(ExecutorRuntime::new(4))
     ];
+    */
+    pub static ref GLOBAL_RUNTIME: Mutex<BTreeMap<usize, Arc<Mutex<ExecutorRuntime>>>> = Mutex::new(BTreeMap::new());
 }
 
+// A cpu should call this function to initialize the ExecutorRuntime on this cpu.
+pub(crate) fn register_executor_runtime() {
+    let global_rt = GLOBAL_RUNTIME.lock();
+    let cpu_id = crate::arch::cpu_id();
+    info!("register_executor_runtime on cpu {}", cpu_id);
+    global_rt.insert(cpu_id as usize, Arc::new(Mutex::new(ExecutorRuntime::new(cpu_id))));
+}
+
+/*
 // obtain a task from other cpu.
 pub(crate) fn steal_task_from_other_cpu() -> Option<(Key, Arc<Task>, WakerRef, DroperRef)> {
     let runtime = GLOBAL_RUNTIME
@@ -137,6 +149,7 @@ pub(crate) fn steal_task_from_other_cpu() -> Option<(Key, Arc<Task>, WakerRef, D
         None
     }
 }
+*/
 
 // per-cpu scheduler.
 pub fn run_until_idle() -> bool {
@@ -210,10 +223,12 @@ pub fn spawn_task(
     debug!("try to spawn {:?} {:?}", priority, cpu_id);
     let priority = priority.unwrap_or(DEFAULT_PRIORITY);
     let runtime = if let Some(cpu_id) = cpu_id {
-        &GLOBAL_RUNTIME[cpu_id]
+        //&GLOBAL_RUNTIME[cpu_id]
+        GLOBAL_RUNTIME.lock().get(&cpu_id).unwrap().clone()
     } else {
         GLOBAL_RUNTIME
-            .iter()
+            .lock()
+            .values()
             .min_by_key(|runtime| runtime.lock().task_num())
             .unwrap()
     };
@@ -265,7 +280,9 @@ pub(crate) fn switch(from_ctx: usize, to_ctx: usize) {
 
 /// return runtime `MutexGuard` of current cpu.
 pub(crate) fn get_current_runtime() -> MutexGuard<'static, ExecutorRuntime> {
-    GLOBAL_RUNTIME[crate::arch::cpu_id() as usize].lock()
+    //GLOBAL_RUNTIME[crate::arch::cpu_id() as usize].lock()
+    let cpu_id = crate::arch::cpu_id() as usize;
+    GLOBAL_RUNTIME.lock().get(&cpu_id).unwrap().lock()
 }
 
 #[allow(dead_code)]
