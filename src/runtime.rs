@@ -129,7 +129,7 @@ lazy_static! {
 }
 
 // A cpu should call this function to initialize the ExecutorRuntime on this cpu.
-pub(crate) fn register_executor_runtime() {
+pub fn register_executor_runtime() {
     let mut active_cpus = ACTIVE_CPUS.lock();
     //let mut global_rt = GLOBAL_RUNTIME.lock();
     let cpu_id = crate::arch::cpu_id() as usize;
