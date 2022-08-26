@@ -57,7 +57,7 @@ pub(crate) fn wait_for_interrupt() {
     let read_timer = || unsafe { core::arch::x86_64::_rdtsc() };
     let start = read_timer();
     interrupts::enable();
-    while read_timer() < start + 100 {}
+    //while read_timer() < start + 100 {}
     if !enable {
         interrupts::disable();
     }
