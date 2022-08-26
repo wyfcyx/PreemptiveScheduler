@@ -244,6 +244,7 @@ pub fn spawn_task(
             .clone()
         */
     };
+    warn!("task spawned on cpu {}", runtime.lock().cpu_id());
     runtime.lock().add_task(priority, future);
 }
 
