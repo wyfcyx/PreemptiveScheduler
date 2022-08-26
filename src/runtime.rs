@@ -194,7 +194,8 @@ pub fn run_until_idle() -> bool {
 
 pub fn spawn(future: impl Future<Output = ()> + Send + 'static) {
     super::run_with_intr_saved_off! {
-        spawn_task(future, None, Some(crate::arch::cpu_id() as _))
+        //spawn_task(future, None, Some(crate::arch::cpu_id() as _))
+        spawn_task(future, None, None)
     }
 }
 

@@ -98,9 +98,11 @@ impl Executor {
     pub fn run(&mut self) {
         loop {
             let mut task_info = self.task_collection.take_task();
+            /*
             if task_info.is_none() {
                 task_info = crate::runtime::steal_task_from_other_cpu();
             }
+            */
             if let Some((_key, task, waker_ref, droper)) = task_info {
                 let waker_ref = Arc::new(waker_ref);
                 let waker = woke::waker_ref(&waker_ref);
