@@ -129,7 +129,7 @@ lazy_static! {
 
 // A cpu should call this function to initialize the ExecutorRuntime on this cpu.
 pub(crate) fn register_executor_runtime() {
-    let global_rt = GLOBAL_RUNTIME.lock();
+    let mut global_rt = GLOBAL_RUNTIME.lock();
     let cpu_id = crate::arch::cpu_id();
     info!("register_executor_runtime on cpu {}", cpu_id);
     global_rt.insert(cpu_id as usize, Arc::new(Mutex::new(ExecutorRuntime::new(cpu_id))));
@@ -283,7 +283,8 @@ pub(crate) fn switch(from_ctx: usize, to_ctx: usize) {
 pub(crate) fn get_current_runtime() -> MutexGuard<'static, ExecutorRuntime> {
     //GLOBAL_RUNTIME[crate::arch::cpu_id() as usize].lock()
     let cpu_id = crate::arch::cpu_id() as usize;
-    GLOBAL_RUNTIME.lock().get(&cpu_id).unwrap().lock()
+    let current_runtime = GLOBAL_RUNTIME.lock().get(&cpu_id).unwrap().clone();
+    current_runtime.lock()
 }
 
 #[allow(dead_code)]
